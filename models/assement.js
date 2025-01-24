@@ -2,9 +2,11 @@ const { default: mongoose } = require("mongoose");
 
 const assementSchema = mongoose.Schema({
     projectName: String,
-    projectOwner: {type: mongoose.Types.Object, ref: 'User'},
-    projectAssignedBy: {type: mongoose.Types.Object, ref: 'User'},
-    projectComments: [{type: mongoose.Types.Object, ref: 'Comment'}],
+    gradeField: {type: mongoose.Types.ObjectId, ref: 'Grade'},
+    projectOwner: {type: mongoose.Types.ObjectId, ref: 'User'},
+    projectAssignedBy: {type: mongoose.Types.ObjectId, ref: 'User'},
+    projectComments: [{type: mongoose.Types.ObjectId, ref: 'Comment'}],
+    coursePaidFor: {type: mongoose.Types.ObjectId, ref: 'Course'},
     createdAt: {type: Date, default: Date.now()},
 })
 

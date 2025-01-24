@@ -14,7 +14,8 @@ const userSchema = mongoose.Schema({
     isAdmin : {type: Boolean, default: false},
     isStaff : Boolean,
     country : String,
-    city : String
+    city : String,
+    createdAt: {type: Date, default: Date.now()}
 });
 
 const User = mongoose.model("User", userSchema);

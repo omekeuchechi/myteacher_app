@@ -2,14 +2,17 @@ const mongoose = require("mongoose");
 
 const courseSchema = mongoose.Schema({
     course : String,
-    courseDescription : [{type: mongoose.Types.ObjectId, ref: 'Faculty'}],
+    courseDescription : String,
     courseFee: String,
-    userFaculty : {type: mongoose.Types.ObjectId, ref: 'Faculty'},
+    courseDuration : String,
+    registerUsers : [{type: mongoose.Types.ObjectId, ref: 'User'}],
+    courseIntructor : [{type: mongoose.Types.ObjectId, ref: 'User'}],
+    createdAt: {type: Date, default: Date.now()}
     // facultyStaff : [{type: mongoose.Types.ObjectId, ref: 'User'}],
     // facultyUser : {type: mongoose.Types.ObjectId, ref: 'User'},
     // facultyUsers : [{type: mongoose.Types.ObjectId, ref: 'User'}]
 })
 
-const Faculty = mongoose.model("Faculty", courseSchema);
+const Course = mongoose.model("Course", courseSchema);
 
-module.exports = Faculty;
+module.exports = Course;

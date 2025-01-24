@@ -7,6 +7,7 @@ const postSchema = mongoose.Schema({
     dataCreated : [{type: Date, default: Date.now()}],
     likeBy : [{type: mongoose.Types.ObjectId, ref: "User"}],
     comments : [{type: mongoose.Types.ObjectId, ref: "Comment"}],
+    createdAt: {type: Date, default: Date.now()}
 });
 
 const Post = mongoose.model('Post', postSchema);

@@ -22,6 +22,8 @@ const CONNECT_DB = process.env.DATABASE_CONN;
 // api importation
 const userRouter = require('./routes/user');
 const paymentRoute = require('./routes/payment');
+const postRoutes = require('./routes/post');
+const commentRouter = require('./routes/comment');
 // const paymentRoutes = require('./routes/paymentRoute');
 
 
@@ -29,6 +31,10 @@ const paymentRoute = require('./routes/payment');
 app.use(bodyParser.json());
 app.use(morgan('tiny'));
 app.use(`${api}/user`, userRouter);
+app.use(`${api}/post`, postRoutes);
+app.use(`${api}/comment`, commentRouter);
+
+// this rout section is for payment gate-way integration logic
 // app.use(`${api}/user/`, paymentRouter);
 app.use(`${api}/payment`, paymentRoute);
 
@@ -43,10 +49,10 @@ mongoose.connect(CONNECT_DB).then(() =>{
 
 
 
-// starting the server
+// starting the server for front end
 app.listen(5000, () => {
     console.log(api);
-    console.log(paymentRoute)
+    // console.log(paymentRoute)
     // console.log(CONNECT_DB);
     console.log('server is running at port 5000');
 })
