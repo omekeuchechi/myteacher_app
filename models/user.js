@@ -12,8 +12,8 @@ const userSchema = mongoose.Schema({
     commetsLiked : [{ type: mongoose.Schema.Types.ObjectId, ref: "Comment" }],
     postLinked : [{ type: mongoose.Schema.Types.ObjectId, ref: "Post" }],
     isAdmin : {type: Boolean, default: false},
-    isStaff : Boolean,
-    country : String,
+    isStaff : {type: Boolean, default: false},
+    country : {type: String, default: "United States of America"},
     city : String,
     createdAt: {type: Date, default: Date.now()}
 });

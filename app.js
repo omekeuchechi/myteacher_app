@@ -24,6 +24,7 @@ const userRouter = require('./routes/user');
 const paymentRoute = require('./routes/payment');
 const postRoutes = require('./routes/post');
 const commentRouter = require('./routes/comment');
+const settingRouter = require('./routes/setting');
 // const paymentRoutes = require('./routes/paymentRoute');
 
 
@@ -33,6 +34,7 @@ app.use(morgan('tiny'));
 app.use(`${api}/user`, userRouter);
 app.use(`${api}/post`, postRoutes);
 app.use(`${api}/comment`, commentRouter);
+app.use(`${api}/setting`, settingRouter);
 
 // this rout section is for payment gate-way integration logic
 // app.use(`${api}/user/`, paymentRouter);

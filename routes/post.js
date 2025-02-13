@@ -92,4 +92,104 @@ router.patch('/:postId/like', authJs, async (req, res) => {
 });
 
 
+router.patch('/:postId/unlike', authJs, async (req, res) => {
+    const postId = req.params.postId;
+    const userId = req.decoded.userId;
+
+    const post = await Post.findById(postId);
+    const user = await User.findById(userId);
+
+    if(!post &&!user){
+        return res.status(404).send("Post or user not found");
+    }
+
+    if(!post.likedBy.includes(userId) ||!user.postsLiked.includes(postId)){
+        const indexOfUserId = post.likedBy.indexOf(userId);
+        const indexOfPostId = user.postsLiked.indexOf(postId);
+
+        post.likedBy.splice(indexOfUserId, 1);
+        user.postsLiked.splice(indexOfPostId, 1);
+
+        const updatedPost = await post.save();
+        const updatedUser = await user.save();
+
+        res.status(200).json({
+            message: "successfully unliked post",
+            post: updatedPost,
+            user: updatedUser
+        })
+
+        // return res.status(400).send("You haven't liked this post");
+    } else{
+
+        res.status(404).send("You haven't liked this post");
+
+    }
+});
+
+
+router.patch('/:postid/editPost', authJs, async (req, res) => {
+    const postId = req.params.commentId;
+    const userId = req.decoded.isAdmin;
+    const postEditInfo = req.body;
+    
+    if(!userId){
+        return res.status(401).send("Unauthorized, you are not an admin");
+    }
+
+    const post = await Post.findById(postId);
+
+    if(!post){
+        return res.status(404).send("Post not found");
+    }
+
+    for(prop in postEditInfo){
+        switch (prop) {
+            case "category":
+                post.prop = postEditInfo.prop;
+                break;
+            case "content":
+                post.prop = postEditInfo.prop;
+                break;
+            default:
+                return;
+        }
+    }
+
+    try {
+        const editedPost = await post.save();
+        res.status(200).json({message: "Post edited successfully", post: editedPost});
+    } catch (error) {
+        res.status(500).json({
+            message: "Error editing post",
+            error: error
+        });
+    }
+});
+
+router.delete('/:postId/deletePost', authJs, async (req, res) => {
+    const postId = req.params.postId;
+    const userId = req.decoded.isAdmin;
+
+    if(!userId){
+        return res.status(401).send("Unauthorized, you are not an admin");
+    }
+
+    try{
+        const deletedPost = await Post.findByIdAndDelete(postId);
+        
+        if(!deletedPost){
+            return res.status(404).send("Post does not exist");
+        }
+        
+        res.status(200).json({message: "Post deleted successfully", deletedPost: deletedPost});
+    } catch (error) {
+        res.status(500).json({
+            message: "Error deleting post",
+            error: error
+        });
+    }
+});
+
+
 module.exports = router;
