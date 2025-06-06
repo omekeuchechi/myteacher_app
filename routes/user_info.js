@@ -41,3 +41,5 @@ router.post('/create', authJs, async (req, res) => {
         })
     }
 });
+
+module.exports = router;

@@ -21,10 +21,12 @@ const CONNECT_DB = process.env.DATABASE_CONN;
 
 // api importation
 const userRouter = require('./routes/user');
-const paymentRoute = require('./routes/payment');
-const postRoutes = require('./routes/post');
+const paymentRouter = require('./routes/payment');
+const postRouter = require('./routes/post');
 const commentRouter = require('./routes/comment');
 const settingRouter = require('./routes/setting');
+const userInfoRouter = require('./routes/user_info');
+const transactionRouter = require('./routes/transaction');
 // const paymentRoutes = require('./routes/paymentRoute');
 
 
@@ -32,13 +34,15 @@ const settingRouter = require('./routes/setting');
 app.use(bodyParser.json());
 app.use(morgan('tiny'));
 app.use(`${api}/user`, userRouter);
-app.use(`${api}/post`, postRoutes);
+app.use(`${api}/post`, postRouter);
 app.use(`${api}/comment`, commentRouter);
 app.use(`${api}/setting`, settingRouter);
+app.use(`${api}/transaction`, transactionRouter);
 
 // this rout section is for payment gate-way integration logic
 // app.use(`${api}/user/`, paymentRouter);
-app.use(`${api}/payment`, paymentRoute);
+app.use(`${api}/payment`, paymentRouter);
+app.use(`${api}/userInfo`, userInfoRouter);
 
 // database connections
 mongoose.connect(CONNECT_DB).then(() =>{
