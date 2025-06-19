@@ -1,18 +1,39 @@
 const mongoose = require('mongoose');
 
-const userInfoSchema = mongoose.Schema({
-    aboutYourSelf: {type: String, default: " a tech guru 🖥💻 looking forward to update once's self "},
-    hobbies: {type: String, default: " coding 🖥, playing football ⚽, dancing 🤸‍♀️ "},
-    stateOfProvidence: {type: String, default: "New york"},
-    marritaStatus: String,
-    storyImage: String,
-    storyVideo: String,
-    state: {type: String, default: "New york"},
-    localGovernment: {type: String, default: "New york"},
-    createdBy: {type: mongoose.Types.ObjectId, ref: 'User'},
-    createdAt: {type: Date, default: Date.now()}
-})
+const userInfoSchema = new mongoose.Schema({
+    aboutYourSelf: {
+        type: String,
+        trim: true
+    },
+    hobbies: {
+        type: String,
+        trim: true
+    },
+    marritaStatus: {
+        type: String,
+        trim: true
+    },
+    storyImage: {
+        type: String,
+        trim: true
+    },
+    storyVideo: {
+        type: String,
+        trim: true
+    },
+    createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true,
+        // Ensures one-to-one relationship
+        unique: true 
+    },
+    address: {
+        type: String,
+        trim: true
+    }
+}, {
+    timestamps: true
+});
 
-const UserInfo = mongoose.model("UserInfo", userInfoSchema);
-
-module.exports = UserInfo;
+module.exports = mongoose.model('userInfo', userInfoSchema);

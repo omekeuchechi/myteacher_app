@@ -1,29 +1,27 @@
 const jwt = require('jsonwebtoken');
-// import { speak } from './../lib/com_voice';
-// const { speak } = require('./../lib/com_voice');
 
 const authJs = (req, res, next) => {
     let token = req.header('authorization');
 
-    if(!token){
+    if (!token) {
         return res.status(401).send('Not authorized, no token found');
     }
 
-    token = token.split(" ");
+    // Support for "Bearer <token>"
+    if (token.startsWith('Bearer ')) {
+        token = token.split(' ')[1];
+    }
 
-    token = token[1];
-
-    try{
+    try {
         const decoded = jwt.verify(token, process.env.TOKEN_SECRET_WORD);
-
         req.decoded = decoded;
         next();
-    }catch(error){
-        return res.status(500).json({
-            message: 'Error occurred',
-            error: error
-        }), speak;
+    } catch (error) {
+        return res.status(401).json({
+            message: 'Invalid or expired token',
+            error: error.message
+        });
     }
-}
+};
 
 module.exports = authJs;

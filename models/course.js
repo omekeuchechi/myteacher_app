@@ -1,11 +1,12 @@
 const mongoose = require("mongoose");
 
 const courseSchema = mongoose.Schema({
-    course : String,
+    course : {type: String, required: true},
     courseDescription : String,
-    price: Number,
-    durationWeeks: Number,
-    courseIntructor : String,
+    price:  {type: Number, required: true},
+    durationWeeks:  {type: Number, required: true},
+    courseIntructor :  {type: String, default: "Admin"},
+    courseImage : String,
     createdAt: {type: Date, default: Date.now()}
 })
 
