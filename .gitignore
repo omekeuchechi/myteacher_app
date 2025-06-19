@@ -1,2 +1,5 @@
 /node_modules
 *.env
+
+# Google Cloud credentials
+config/google-service-account.json
