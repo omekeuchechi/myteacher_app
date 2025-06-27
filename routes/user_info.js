@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const os = require('os');
 const User = require('../models/user');
 const UserInfo = require('../models/user_info');
 const authJs = require('../middlewares/auth');
@@ -14,9 +16,28 @@ cloudinary.config({
 });
 const path = require('path');
 const sharp = require('sharp');
-const ffmpeg = require('fluent-ffmpeg');
 const stream = require('stream');
 const Pusher = require('pusher');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
+
+// Set the path to the ffmpeg binary
+ffmpeg.setFfmpegPath(ffmpegPath);
+
+// Helper function to write buffer to a temporary file
+function writeTempFile(buffer, extension = 'mp4') {
+    return new Promise((resolve, reject) => {
+        const tempPath = path.join(os.tmpdir(), `input-${Date.now()}.${extension}`);
+        fs.writeFile(tempPath, buffer, (err) => {
+            if (err) {
+                reject(err);
+            } else {
+                resolve(tempPath);
+            }
+        });
+    });
+}
+
 const pusher = new Pusher({
     appId: process.env.PUSHER_APP_ID,
     key: process.env.PUSHER_KEY,
@@ -96,20 +117,29 @@ router.post('/create', authJs, async (req, res) => {
     }
 });
 
-// Update userInfo (authenticated user only)
-router.put('/update', authJs, async (req, res) => {
+// Update userInfo (authenticated user only) - partial updates with PATCH
+router.patch('/update', authJs, async (req, res) => {
     const userId = req.decoded.userId;
     try {
+        const updateFields = {};
+        
+        // Only include fields that are provided in the request
+        if (req.body.aboutYourSelf !== undefined) updateFields.aboutYourSelf = req.body.aboutYourSelf;
+        if (req.body.hobbies !== undefined) updateFields.hobbies = req.body.hobbies;
+        if (req.body.marritaStatus !== undefined) updateFields.marritaStatus = req.body.marritaStatus;
+        if (req.body.address !== undefined) updateFields.address = req.body.address;
+
+        // If no valid fields to update
+        if (Object.keys(updateFields).length === 0) {
+            return res.status(400).json({ message: 'No valid fields provided for update' });
+        }
+
         const updated = await UserInfo.findOneAndUpdate(
             { createdBy: userId },
-            {
-                aboutYourSelf: req.body.aboutYourSelf,
-                hobbies: req.body.hobbies,
-                marritaStatus: req.body.marritaStatus,
-                                address: req.body.address,
-            },
-            { new: true }
+            { $set: updateFields },
+            { new: true, runValidators: true }
         );
+        
         if (!updated) {
             return res.status(404).json({ message: 'User info not found. Please create first.' });
         }
@@ -146,6 +176,38 @@ router.get('/me', authJs, async (req, res) => {
     }
 });
 
+// Get user profile by ID
+router.get('/profile/:id', authJs, async (req, res) => {
+    try {
+        const userId = req.params.id;
+        if (!userId) {
+            return res.status(400).json({ message: 'User ID is required' });
+        }
+
+        const userInfo = await UserInfo.findOne({ createdBy: userId })
+            .populate('createdBy', 'name email avatar isAdmin');
+            
+        if (!userInfo) {
+            return res.status(404).json({ 
+                success: false,
+                message: 'User profile not found' 
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            data: userInfo
+        });
+    } catch (error) {
+        console.error('Error fetching user profile:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Internal server error',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
 // api for fetching user info as admin
 router.get('/all-user-info/:id', authJs, async (req, res) => {
     const userId = req.params.id;
@@ -163,27 +225,63 @@ router.get('/all-user-info/:id', authJs, async (req, res) => {
     }
 });
 
-// Public search endpoint (by user name, hobbies, marritaStatus, or address)
-router.get('/search', async (req, res) => {
+// Search users by name, hobbies, marital status, or address
+router.get('/search', authJs, async (req, res) => {
     const { q } = req.query;
     if (!q) {
-        return res.status(400).json({ message: 'Search query required.' });
+        return res.status(400).json({ message: 'Search query is required.' });
     }
     try {
-        const regex = new RegExp(q, 'i');
-        // First, find users whose name matches
-        const users = await User.find({ name: regex }, '_id');
-        const userIds = users.map(u => u._id);
-        // Then, search userInfo by user name, hobbies, marritaStatus, or address
-        const results = await UserInfo.find({
-            $or: [
-                { createdBy: { $in: userIds } },
-                { hobbies: regex },
-                { marritaStatus: regex },
-                { address: regex }
-            ]
-        }).populate('createdBy', 'name');
-        res.status(200).json(results);
+        const userId = req.decoded && req.decoded.userId;
+        if (!userId) {
+            return res.status(403).json({ message: "Unauthorized, user only" });
+        }
+
+        const searchRegex = new RegExp(q, 'i');
+        
+        // Find users whose name matches or whose userInfo matches the search criteria
+        const users = await User.aggregate([
+            {
+                $match: {
+                    $or: [
+                        { name: { $regex: searchRegex } }
+                    ]
+                }
+            },
+            {
+                $lookup: {
+                    from: 'userinfos',  // This should match your MongoDB collection name for UserInfo
+                    localField: '_id',
+                    foreignField: 'createdBy',
+                    as: 'userInfo'
+                }
+            },
+            { $unwind: { path: '$userInfo', preserveNullAndEmptyArrays: true } },
+            {
+                $match: {
+                    $or: [
+                        { name: { $regex: searchRegex } },
+                        { 'userInfo.hobbies': { $regex: searchRegex } },
+                        { 'userInfo.marritaStatus': { $regex: searchRegex } },
+                        { 'userInfo.address': { $regex: searchRegex } }
+                    ]
+                }
+            },
+            {
+                $project: {
+                    _id: 1,
+                    name: 1,
+                    email: 1,
+                    'userInfo.aboutYourSelf': 1,
+                    'userInfo.hobbies': 1,
+                    'userInfo.marritaStatus': 1,
+                    'userInfo.address': 1,
+                    'userInfo.storyImage': 1
+                }
+            }
+        ]);
+
+        res.status(200).json(users);
     } catch (error) {
         res.status(500).json({
             message: 'internal server error',
@@ -233,70 +331,144 @@ router.post('/upload/storyImage', authJs, upload.single('storyImage'), async (re
     }
 });
 
+// Helper function to compress video buffer
+async function compressVideoBuffer(inputBuffer) {
+    let tempInputPath = null;
+    let tempOutputPath = null;
+    
+    try {
+        if (!inputBuffer || !Buffer.isBuffer(inputBuffer)) {
+            throw new Error('Invalid input buffer');
+        }
+
+        console.log('Starting video compression. Input buffer size:', inputBuffer.length, 'bytes');
+        
+        // Write input buffer to a temporary file
+        tempInputPath = await writeTempFile(inputBuffer);
+        tempOutputPath = path.join(os.tmpdir(), `video-${Date.now()}.mp4`);
+        
+        console.log('Temporary input file created at:', tempInputPath);
+        
+        // Create a promise to handle the FFmpeg process
+        return new Promise((resolve, reject) => {
+            const command = ffmpeg()
+                .input(tempInputPath)
+                .inputOptions([
+                    '-y', // Overwrite output file if it exists
+                    '-analyzeduration 100M', // Increase analyze duration
+                    '-probesize 100M' // Increase probe size
+                ])
+                .on('start', (commandLine) => {
+                    console.log('FFmpeg command:', commandLine);
+                })
+                .on('codecData', (data) => {
+                    console.log('Input video info:', JSON.stringify(data, null, 2));
+                })
+                .on('stderr', (stderrLine) => {
+                    console.log('FFmpeg stderr:', stderrLine);
+                })
+                .on('error', (err, stdout, stderr) => {
+                    console.error('FFmpeg error:', err);
+                    console.error('FFmpeg stdout:', stdout);
+                    console.error('FFmpeg stderr:', stderr);
+                    reject(new Error(`FFmpeg error: ${err.message}`));
+                })
+                .output(tempOutputPath)
+                .videoCodec('libx264')
+                .audioCodec('aac')
+                .outputOptions([
+                    '-preset medium',
+                    '-crf 28',
+                    '-b:a 128k',
+                    '-movflags frag_keyframe+empty_moov',
+                    '-f mp4',
+                    '-threads 0' // Use all available CPU threads
+                ]);
+
+            console.log('Starting FFmpeg processing...');
+            
+            command.on('end', async () => {
+                try {
+                    console.log('FFmpeg processing finished successfully');
+                    console.log('Reading output file from:', tempOutputPath);
+                    
+                    // Read the output file
+                    const data = await fs.promises.readFile(tempOutputPath);
+                    console.log('Compressed video size:', data.length, 'bytes');
+                    
+                    // Clean up temp files
+                    await Promise.all([
+                        fs.promises.unlink(tempInputPath).catch(console.error),
+                        fs.promises.unlink(tempOutputPath).catch(console.error)
+                    ]);
+                    
+                    resolve(data);
+                } catch (err) {
+                    console.error('Error in FFmpeg end handler:', err);
+                    reject(new Error('Failed to process video: ' + err.message));
+                }
+            });
+
+            // Start processing
+            command.run();
+        });
+        
+    } catch (error) {
+        console.error('Error in compressVideoBuffer:', error);
+        
+        // Clean up any created temp files
+        const cleanup = [];
+        if (tempInputPath) cleanup.push(fs.promises.unlink(tempInputPath).catch(console.error));
+        if (tempOutputPath) cleanup.push(fs.promises.unlink(tempOutputPath).catch(console.error));
+        
+        await Promise.all(cleanup);
+        
+        throw error;
+    }
+}
+
 // Upload storyVideo
 router.post('/upload/storyVideo', authJs, upload.single('storyVideo'), async (req, res) => {
     const userId = req.decoded.userId;
     if (!req.file) {
         return res.status(400).json({ message: 'No file uploaded.' });
     }
+    
     const folderPath = `${userId}/storyVideo`;
+    
     try {
-    // Delete previous storyVideo folder (resource_type: 'video')
-    await deleteCloudinaryFolder(folderPath, 'video');
-    // Adaptive compression to ~400KB using ffmpeg
-    let targetSize = 400000; // 400KB
-    let scale = 320;
-    let bitrate = 200; // in kbps
-    let compressedBuffer;
-    let attempts = 0;
-    while (attempts < 6) { // try up to 6 times
-    const inputBufferStream = new stream.PassThrough();
-    inputBufferStream.end(req.file.buffer);
-    let compressedChunks = [];
-    await new Promise((resolve, reject) => {
-    ffmpeg(inputBufferStream)
-    .outputOptions([
-    `-vf`, `scale=${scale}:-2`,
-    `-b:v`, `${bitrate}k`,
-    '-preset', 'ultrafast',
-    '-c:v', 'libx264',
-    '-c:a', 'aac',
-    '-movflags', 'frag_keyframe+empty_moov',
-    '-f', 'mp4'
-    ])
-    .on('error', reject)
-    .on('end', resolve)
-    .pipe()
-    .on('data', chunk => compressedChunks.push(chunk))
-    .on('end', resolve);
-    });
-    compressedBuffer = Buffer.concat(compressedChunks);
-    if (compressedBuffer.length <= targetSize) break;
-    // Lower quality for next attempt
-    bitrate = Math.max(50, Math.floor(bitrate * 0.6));
-    scale = Math.max(120, Math.floor(scale * 0.7));
-    attempts++;
-    }
-    if (compressedBuffer.length > targetSize) {
-    return res.status(400).json({ message: 'Compressed video is still larger than 400KB. Please upload a smaller/shorter video.' });
-    }
-    // Upload new video
-    const url = await uploadBufferToCloudinary(compressedBuffer, req.file.originalname, req.file.mimetype, folderPath, 'video');
+        // Delete previous storyVideo folder
+        await deleteCloudinaryFolder(folderPath, 'video');
+        
+        // Compress video to target ~20MB
+        const compressedBuffer = await compressVideoBuffer(req.file.buffer);
+        
+        // Upload to Cloudinary
+        const url = await uploadBufferToCloudinary(
+            compressedBuffer,
+            req.file.originalname,
+            req.file.mimetype,
+            folderPath,
+            'video'
+        );
+        
         // Update UserInfo
         const userInfo = await UserInfo.findOneAndUpdate(
             { createdBy: userId },
             { storyVideo: url },
             { new: true }
         );
+        
         if (!userInfo) {
             return res.status(404).json({ message: 'User info not found. Please create first.' });
         }
-        // Pusher event
-            pusher.trigger('user-info', 'storyVideo', { userId, url });
-            res.status(200).json({ message: 'Story video uploaded successfully', url });
+        
+        // Trigger Pusher event
+        pusher.trigger('user-info', 'storyVideo', { userId, url });
+        res.status(200).json({ message: 'Story video uploaded successfully', url });
     } catch (error) {
-        console.error('Story video upload failed:', error);
-        res.status(500).json({ message: 'Upload failed', error: error.message || error });
+        console.error('Video upload error:', error);
+        res.status(500).json({ message: 'Video upload failed', error: error.message || error });
     }
 });
 

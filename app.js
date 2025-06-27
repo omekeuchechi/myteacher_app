@@ -13,12 +13,12 @@ require('dotenv').config();
 // storing express to app making app the main focus of this file
 const app = express();
 // Increase limit to 10mb (or higher if needed)
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
+app.use(express.json({ limit: '1000mb' }));
+app.use(express.urlencoded({ limit: '1000mb', extended: true }));
 // for cross origin resource sharing
 // this is to allow the frontend to access the backend
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: `${process.env.CORS_ORIGIN}`,
   credentials: true
 }));
 
@@ -55,10 +55,15 @@ const enrollmentRouter = require('./routes/enrollment');
 const lectureRouter = require('./routes/lecture');
 const AssetRouter = require('./routes/asset');
 const contactMessageRouter = require('./routes/contactMessage');
+const mailerRouter = require('./routes/mailer');
+const socialRoutes = require('./routes/social');
+const assignmentRoutes = require('./routes/assignment');
+const certificateRoutes = require('./routes/certificate');
 // const paymentRoutes = require('./routes/paymentRoute');
 
 // Add after other requires
 const { scheduleLectureUpdates } = require('./lib/lectureScheduler');
+const { scheduleAIGrading } = require('./lib/cronJob');
 
 // middleware
 app.use(bodyParser.json());
@@ -78,9 +83,14 @@ app.use(`${api}/payment`, paymentRouter);
 app.use(`${api}/user_info`, userInfoRouter);
 app.use(`${api}/assets`, AssetRouter);
 app.use(`${api}/contactMessage`, contactMessageRouter);
+app.use(`${api}/mailer`, mailerRouter);
+app.use(`${api}/social`, socialRoutes);
+app.use(`${api}/assignments`, assignmentRoutes);
+app.use(`${api}/certificates`, certificateRoutes);
 
 // Initialize scheduler
 scheduleLectureUpdates();
+scheduleAIGrading(); // Start the AI grading cron job
 
 // database connections
 mongoose.connect(CONNECT_DB).then(() =>{
