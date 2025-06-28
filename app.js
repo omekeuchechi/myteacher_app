@@ -96,6 +96,12 @@ scheduleAIGrading(); // Start the AI grading cron job
 mongoose.connect(CONNECT_DB).then(() =>{
     // to check if the database is connected 
     console.log('Connected to db');
+    
+    // Initialize certificate scheduler only after successful DB connection
+    if (process.env.NODE_ENV !== 'test') {
+      const CertificateScheduler = require('./services/certificateScheduler');
+      CertificateScheduler.start();
+    }
 }).catch((err) => {
     // to display the error if the connection fails to 
     console.log(err);

@@ -17,6 +17,10 @@ const lectureScoreSchema = new mongoose.Schema({
         type: Number,
         default: 0,
         max: 4
+    },
+    certificateIssued: {
+        type: Boolean,
+        default: false
     }
 }, { _id: false });
 
@@ -89,6 +93,18 @@ certificateSchema.statics.enrollInLecture = async function(userId, lectureId) {
 };
 
 
+// Method to check if user has been graded for at least 3 assignments in a lecture
+certificateSchema.methods.hasMinimumGradedAssignments = function(lectureId, minAssignments = 3) {
+    const lectureScore = this.certScores.find(cs => cs.lecture.equals(lectureId));
+    return lectureScore && lectureScore.assignmentsGraded >= minAssignments;
+};
+
+// Method to get the number of graded assignments for a lecture
+certificateSchema.methods.getGradedAssignmentsCount = function(lectureId) {
+    const lectureScore = this.certScores.find(cs => cs.lecture.equals(lectureId));
+    return lectureScore ? lectureScore.assignmentsGraded : 0;
+};
+
 const Certificate = mongoose.model('Certificate', certificateSchema);
 
 module.exports = Certificate;
@@ -96,3 +112,4 @@ module.exports = Certificate;
 
 
 // create me a task schdular for generating pdf certificate after when the user have being graded for like 3 assignment been submitted according to the lecture batch get the user details and fill it in the pdf file which will be generated if time to observe this project the pdf let it be a npm package it will not it should not save in my project it will generate and send as an email message and also send to the user 
+
