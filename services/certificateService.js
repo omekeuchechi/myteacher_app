@@ -62,7 +62,21 @@ class CertificateService {
         drawCenteredText('This is to certify that', height - 180, 16);
         drawCenteredText(user.name.toUpperCase(), height - 220, 24, true);
         drawCenteredText('has successfully completed the course', height - 260, 16);
-        drawCenteredText(`"${lecture.name}"`, height - 290, 18, true);
+        
+        // Handle different lecture data structures
+        let lectureTitle = 'the course';
+        if (lecture) {
+            lectureTitle = lecture.title || lecture.name || 'the course';
+        }
+        drawCenteredText(`"${lectureTitle}"`, height - 290, 18, true);
+        
+        // Debug log for lecture data
+        console.log('Certificate generation - Lecture data:', {
+            lectureId: lecture?._id,
+            title: lecture?.title,
+            name: lecture?.name,
+            finalTitle: lectureTitle
+        });
         
         // Add score and grade
         const grade = this.calculateGrade(score);
@@ -278,6 +292,194 @@ class CertificateService {
                 console.error(`Error processing certificate for user ${item.certificate.user?._id}:`, error);
             }
         }
+    }
+
+    static async generateCertificatePDF({ userName, userEmail, score, issueDate, certificateId }) {
+        const PDFDocument = require('pdfkit');
+        
+        return new Promise((resolve, reject) => {
+            try {
+                const doc = new PDFDocument({
+                    size: 'A4',
+                    layout: 'landscape',
+                    margin: 0
+                });
+
+                const buffers = [];
+                doc.on('data', buffers.push.bind(buffers));
+                doc.on('end', () => {
+                    const pdfData = Buffer.concat(buffers);
+                    resolve(pdfData);
+                });
+
+                // Add content to the PDF
+                doc.rect(0, 0, doc.page.width, doc.page.height).fill('#f8f9fa');
+                
+                // Add ornate border
+                const borderPadding = 30;
+                const borderWidth = 2;
+                const cornerLength = 50;
+                
+                // Outer border
+                doc.roundedRect(
+                    borderPadding, 
+                    borderPadding, 
+                    doc.page.width - (borderPadding * 2), 
+                    doc.page.height - (borderPadding * 2),
+                    10
+                )
+                .lineWidth(borderWidth)
+                .stroke('#4a6da7');
+                
+                // Inner border
+                const innerPadding = 10;
+                doc.roundedRect(
+                    borderPadding + innerPadding, 
+                    borderPadding + innerPadding, 
+                    doc.page.width - ((borderPadding + innerPadding) * 2), 
+                    doc.page.height - ((borderPadding + innerPadding) * 2),
+                    5
+                )
+                .lineWidth(1)
+                .stroke('#4a6da7');
+                
+                // Add corner decorations
+                const cornerStyle = (x, y, size) => {
+                    doc.moveTo(x, y)
+                       .lineTo(x + size, y)
+                       .lineTo(x, y + size)
+                       .lineTo(x, y)
+                       .fill('#4a6da7');
+                };
+                
+                // Draw corners (top-left, top-right, bottom-left, bottom-right)
+                const cornerSize = 15;
+                const cornerOffset = borderPadding + 10;
+                
+                // Top-left corner
+                cornerStyle(cornerOffset, cornerOffset, cornerSize);
+                // Top-right corner
+                doc.save()
+                   .translate(doc.page.width - cornerOffset, cornerOffset)
+                   .rotate(90)
+                   .path('M 0,0 L 15,0 L 0,15 Z')
+                   .fill('#4a6da7')
+                   .restore();
+                // Bottom-left corner
+                doc.save()
+                   .translate(cornerOffset, doc.page.height - cornerOffset)
+                   .rotate(270)
+                   .path('M 0,0 L 15,0 L 0,15 Z')
+                   .fill('#4a6da7')
+                   .restore();
+                // Bottom-right corner
+                doc.save()
+                   .translate(doc.page.width - cornerOffset, doc.page.height - cornerOffset)
+                   .rotate(180)
+                   .path('M 0,0 L 15,0 L 0,15 Z')
+                   .fill('#4a6da7')
+                   .restore();
+                
+                // Add a subtle watermark
+                doc.opacity(0.05)
+                   .fontSize(120)
+                   .font('Helvetica-Bold')
+                   .text('MY TEACHER', {
+                       align: 'center',
+                       verticalAlign: 'center',
+                       width: doc.page.width,
+                       height: doc.page.height
+                   })
+                   .opacity(1);
+                
+                // Header
+                doc.fillColor('#2c3e50')
+                   .fontSize(36)
+                   .font('Helvetica-Bold')
+                   .text('CERTIFICATE OF COMPLETION', {
+                       align: 'center',
+                       lineGap: 10
+                   });
+                
+                // Add a decorative line under the title
+                doc.strokeColor('#4a6da7')
+                   .lineWidth(1)
+                   .moveTo(doc.page.width / 2 - 100, 150)
+                   .lineTo(doc.page.width / 2 + 100, 150)
+                   .stroke();
+                
+                // Add small decorative elements on the sides
+                doc.fillColor('#4a6da7')
+                   .circle(doc.page.width / 2 - 120, 150, 3)
+                   .fill()
+                   .circle(doc.page.width / 2 + 120, 150, 3)
+                   .fill();
+
+                // Body
+                doc.moveDown(2);
+                doc.fontSize(18)
+                   .text('This is to certify that', { align: 'center' });
+                
+                doc.moveDown(1);
+                doc.font('Helvetica-Bold')
+                   .fontSize(28)
+                   .text(userName, { align: 'center' });
+                
+                doc.moveDown(1);
+                doc.font('Helvetica')
+                   .fontSize(16)
+                   .text('has successfully completed the course with a total score of', { align: 'center' });
+                
+                doc.moveDown(1);
+                doc.font('Helvetica-Bold')
+                   .fontSize(36)
+                   .text(`${score.toFixed(2)}%`, { align: 'center' });
+                
+                // Add a decorative element before the footer
+                doc.fillColor('#4a6da7')
+                   .rect(doc.page.width / 2 - 75, doc.page.height - 180, 150, 4)
+                   .fill();
+                
+                // Footer
+                doc.moveDown(1);
+                doc.fontSize(12)
+                   .fillColor('#2c3e50')
+                   .text(`Certificate ID: ${certificateId}`, 50, doc.page.height - 160);
+                
+                doc.fontSize(12)
+                   .text(`Issued on: ${issueDate.toLocaleDateString()}`, 50, doc.page.height - 140);
+                
+                // Add signature line
+                doc.moveTo(50, doc.page.height - 100)
+                   .lineTo(250, doc.page.height - 100)
+                   .stroke('#4a6da7');
+                
+                doc.fontSize(10)
+                   .text('Authorized Signature', 50, doc.page.height - 90);
+                
+                // Add company info
+                doc.fontSize(10)
+                   .fillColor('#2c3e50')
+                   .text('MyTeacher App', 
+                       doc.page.width - 250, doc.page.height - 120, {
+                           width: 200,
+                           align: 'right',
+                           lineGap: 5
+                       })
+                   .font('Helvetica')
+                   .fontSize(8)
+                   .text('Official Certification', 
+                       doc.page.width - 250, null, {
+                           width: 200,
+                           align: 'right',
+                           lineGap: 5
+                       });
+
+                doc.end();
+            } catch (error) {
+                reject(error);
+            }
+        });
     }
 }
 

@@ -92,20 +92,48 @@ app.use(`${api}/certificates`, certificateRoutes);
 scheduleLectureUpdates();
 scheduleAIGrading(); // Start the AI grading cron job
 
-// database connections
-mongoose.connect(CONNECT_DB).then(() =>{
-    // to check if the database is connected 
-    console.log('Connected to db');
-    
-    // Initialize certificate scheduler only after successful DB connection
-    if (process.env.NODE_ENV !== 'test') {
-      const CertificateScheduler = require('./services/certificateScheduler');
-      CertificateScheduler.start();
+// MongoDB connection options
+const mongoOptions = {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 30000, // Increase timeout to 30 seconds
+    socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+    family: 4, // Use IPv4, skip trying IPv6
+    retryWrites: true,
+    w: 'majority'
+};
+
+// Database connection with error handling
+const connectWithRetry = async () => {
+    try {
+        console.log('Attempting to connect to MongoDB...');
+        await mongoose.connect(CONNECT_DB, mongoOptions);
+        console.log('✅ MongoDB connected successfully');
+        
+        // Initialize certificate scheduler only after successful DB connection
+        if (process.env.NODE_ENV !== 'test') {
+            const CertificateScheduler = require('./services/certificateScheduler');
+            CertificateScheduler.start();
+        }
+    } catch (error) {
+        console.error('❌ MongoDB connection error:', error.message);
+        console.log('Retrying connection in 5 seconds...');
+        setTimeout(connectWithRetry, 5000);
     }
-}).catch((err) => {
-    // to display the error if the connection fails to 
-    console.log(err);
-})
+};
+
+// Handle connection events
+mongoose.connection.on('error', (err) => {
+    console.error('MongoDB connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+    console.log('MongoDB disconnected. Attempting to reconnect...');
+    connectWithRetry();
+});
+
+// Initial connection
+connectWithRetry();
 
 
 

@@ -6,10 +6,13 @@ const Certificate = require('../models/certificate');
 const Lecture = require('../models/lecture');
 const User = require('../models/user');
 const mongoose = require('mongoose');
-const sendEmail = require('../lib/sendEmail'); // Import the email utility
-const { getAIScoreAndCorrection } = require('../utils/aiService'); // Import the AI service
-const authJs = require('../middlewares/auth'); // Import the auth middleware
+const sendEmail = require('../lib/sendEmail');
+const { getAIScoreAndCorrection } = require('../utils/aiService');
+const authJs = require('../middlewares/auth');
 const CertificateService = require('../services/certificateService');
+
+// Apply authentication middleware to all certificate routes
+router.use(authJs);
 
 // The core grading logic, now returns details of graded submissions
 const gradeSubmissions = async () => {
@@ -35,16 +38,26 @@ const gradeSubmissions = async () => {
                     needsSave = true;
 
                     // Update the student's certificate score
-                    await Certificate.updateScore(sub.student._id, assignment.targetBatch, score);
+                    const certUpdate = await Certificate.updateScore(
+                        sub.student._id, 
+                        assignment.targetBatch, 
+                        score,
+                        {
+                            assignmentId: assignment._id,
+                            assignmentName: assignment.assignmentName,
+                            submittedAt: sub.submittedAt || new Date()
+                        }
+                    );
 
-                    // Store details for email notification
-                    console.log(`Sending grading email to: ${sub.student.email}`);
                     gradedDetails.push({
                         studentName: sub.student.name,
                         studentEmail: sub.student.email,
                         assignmentTitle: assignment.assignmentName,
                         score,
-                        correction
+                        correction,
+                        certificateUpdated: !!certUpdate,
+                        lectureId: assignment.targetBatch,
+                        timestamp: new Date()
                     });
                 }
             }
@@ -88,6 +101,120 @@ const gradeSubmissions = async () => {
 cron.schedule('*/2 * * * *', () => {
     // This is the automatic, silent run. We call gradeSubmissions but don't need to do anything with the results here.
     gradeSubmissions().catch(error => console.error('Error in scheduled cron job:', error));
+});
+
+// Get certificate results for a student
+router.get('/student/results', authJs, async (req, res) => {
+    try {
+        // The auth middleware has already verified the user
+        const user = req.user || req.decoded;
+        
+        if (!user || !user.id) {
+            console.error('No valid user object in request');
+            return res.status(401).json({
+                success: false,
+                message: 'Authentication required',
+                error: 'No valid user session found'
+            });
+        }
+        
+        const userId = user.id;
+        
+        console.log(`Fetching certificates for user ${userId}...`);
+        
+        // Find all certificates for the user with timeout handling
+        let certificates;
+        try {
+            certificates = await Certificate.find({ user: userId })
+                .populate({
+                    path: 'certScores.lecture',
+                    select: 'name description _id',
+                    model: 'Lecture'
+                })
+                .populate('user', 'name email') // Populate user details
+                .maxTimeMS(10000) // 10 second timeout
+                .lean();
+                
+            console.log(`Found ${certificates ? certificates.length : 0} certificates for user ${userId}`);
+                
+            if (!certificates || certificates.length === 0) {
+                return res.status(200).json({
+                    success: true,
+                    message: 'No certificate results found',
+                    data: {
+                        user: {
+                            id: user.id,
+                            name: user.name,
+                            email: user.email
+                        },
+                        certificates: []
+                    }
+                });
+            }
+        } catch (dbError) {
+            console.error('Database error in /student/results:', dbError);
+            if (dbError.name === 'MongooseServerSelectionError' || dbError.name === 'MongooseError') {
+                return res.status(503).json({
+                    success: false,
+                    message: 'Service temporarily unavailable',
+                    error: 'Database connection error. Please try again later.'
+                });
+            }
+            throw dbError; // Re-throw other errors to be caught by the outer catch
+        }
+        
+        // Extract user details from the first certificate or use the authenticated user
+        const userDetails = certificates[0]?.user || {
+            _id: user.id,
+            name: user.name,
+            email: user.email
+        };
+
+        // Process and format the results
+        const formattedCertificates = certificates.map(cert => {
+            return {
+                certificateId: cert._id,
+                userId: cert.user?._id || cert.user,
+                certScores: (cert.certScores || []).map(score => ({
+                    lecture: {
+                        id: score.lecture?._id,
+                        name: score.lecture?.name,
+                        description: score.lecture?.description
+                    },
+                    score: score.score,
+                    grade: score.grade,
+                    dateAwarded: score.dateAwarded
+                })).filter(score => score.lecture && score.lecture.id), // Filter out any invalid lecture entries
+                createdAt: cert.createdAt,
+                updatedAt: cert.updatedAt
+            };
+        });
+
+        // Prepare the response
+        const response = {
+            success: true,
+            message: 'Certificate results retrieved successfully',
+            data: {
+                user: {
+                    id: userDetails._id,
+                    name: userDetails.name,
+                    email: userDetails.email
+                },
+                certificates: formattedCertificates
+            }
+        };
+
+        console.log(`Sending response for user ${userDetails._id} with ${formattedCertificates.length} certificates`);
+        res.status(200).json(response);
+        
+    } catch (error) {
+        console.error('Error fetching student results:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Error fetching certificate results',
+            error: error.message
+        });
+    }
 });
 
 // Manual trigger for grading with email notifications
@@ -310,23 +437,42 @@ router.get('/:certificateId', authJs, async (req, res) => {
 });
 
 // Get all certificates for the authenticated user
-router.get('/user/:userId', authJs, async (req, res) => {
+router.get('/user/:userId', async (req, res) => {
     try {
         console.log('=== New Certificate Request ===');
         console.log('Request params:', req.params);
+        
+        // Get the authenticated user from the decoded token
+        const authenticatedUser = req.decoded;
+        const requestedUserId = req.params.userId;
+        
         console.log('Authenticated user:', {
-            id: req.user?._id,
-            email: req.user?.email,
-            isAdmin: req.user?.isAdmin
+            id: authenticatedUser?.id || authenticatedUser?._id,
+            email: authenticatedUser?.email,
+            isAdmin: authenticatedUser?.isAdmin
         });
         
         // Verify the requesting user is authorized
-        if (!req.user || !req.user._id.toString() || !req.user.isAdmin || req.user._id.toString() !== req.decoded.id || req.user._id.toString() !== req.decoded.userId || req.user._id.toString() !== req.decoded._id ||  req.decoded.id !== req.decoded.userId || req.decoded.id !== req.decoded._id || req.decoded.userId !== req.decoded._id) {
+        if (!authenticatedUser || (!authenticatedUser.id && !authenticatedUser._id)) {
             console.error('No valid user object in request');
             return res.status(401).json({
                 success: false,
                 message: 'Authentication required',
                 error: 'No valid user session found'
+            });
+        }
+        
+        // Check if the authenticated user is either an admin or requesting their own data
+        const authUserId = authenticatedUser.id || authenticatedUser._id;
+        const isAdmin = authenticatedUser.isAdmin === true;
+        const isOwnData = authUserId.toString() === requestedUserId;
+        
+        if (!isAdmin && !isOwnData) {
+            console.error('Unauthorized access attempt');
+            return res.status(403).json({
+                success: false,
+                message: 'Unauthorized',
+                error: 'You do not have permission to access this resource'
             });
         }
 
@@ -404,28 +550,120 @@ function calculateGrade(score) {
     return 'D (Pass)';
 }
 
-// Download certificate as PDF
-router.get('/download/:certificateId', authJs, async (req, res) => {
+// Download certificate as PDF for a specific score
+router.get('/download/:scoreId', async (req, res) => {
     try {
-        const { certificateId } = req.params;
-        const userId = req.decoded.id || req.decoded.userId || req.decoded._id || req.decoded;
-
-        // Find the certificate
-        const certificate = await Certificate.findOne({ user: userId })
-            .populate('user', 'name email')
-            .populate('certScores.lecture', 'name description');
-
-        if (!certificate) {
-            return res.status(404).json({
+        const { scoreId } = req.params;
+        const authenticatedUser = req.decoded;
+        
+        if (!authenticatedUser || (!authenticatedUser.id && !authenticatedUser._id)) {
+            console.error('No valid user object in request');
+            return res.status(401).json({
                 success: false,
-                message: 'Certificate not found'
+                message: 'Authentication required',
+                error: 'No valid user session found'
             });
         }
 
-        // Find the specific certificate score
-        const certScore = certificate.certScores.find(
-            cs => cs._id.toString() === certificateId
-        );
+        if (!scoreId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Score ID is required'
+            });
+        }
+
+        let certScore;
+        let certificate;
+
+        // Check if the scoreId is in the format 'score-userIndex-scoreIndex'
+        const scoreMatch = scoreId.match(/^score-(\d+)-(\d+)$/);
+        
+        if (scoreMatch) {
+            // Handle the score-X-Y format
+            const [_, userIndex, scoreIndex] = scoreMatch;
+            
+            // Find the user's certificate
+            const userId = authenticatedUser.id || authenticatedUser._id;
+            certificate = await Certificate.findOne({ user: userId })
+                .populate({
+                    path: 'user',
+                    select: 'name email'
+                })
+                .populate({
+                    path: 'certScores.lecture',
+                    select: 'title description',  // Changed from 'name' to 'title'
+                    // Ensure we're not getting null lectures
+                    match: { _id: { $exists: true } }
+                });
+
+            if (!certificate || !certificate.certScores || certificate.certScores.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'No certificate scores found for user'
+                });
+            }
+
+            // Filter out any null lectures that didn't match the population
+            certificate.certScores = certificate.certScores.filter(score => score.lecture);
+            
+            if (certificate.certScores.length === 0) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'No valid lecture data found for certificate'
+                });
+            }
+
+            // Get the score at the specified index
+            const scoreIdx = parseInt(scoreIndex, 10);
+            if (scoreIdx >= certificate.certScores.length) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Certificate score not found at the specified index'
+                });
+            }
+            
+            certScore = certificate.certScores[scoreIdx];
+            
+            // If we still don't have complete lecture data, try to handle it
+            if (certScore.lecture && !certScore.lecture.name) {
+                console.log('Handling lecture data with custom structure:', certScore.lecture);
+                // If lecture is just an ID string, try to fetch it
+                if (typeof certScore.lecture === 'string') {
+                    const Lecture = require('../models/lecture');
+                    const lecture = await Lecture.findById(certScore.lecture).select('title description');
+                    if (lecture) {
+                        certScore.lecture = {
+                            name: lecture.title || `Lecture ${scoreIndex}`,
+                            description: lecture.description || 'No description available',
+                            _id: lecture._id.toString()
+                        };
+                    }
+                } 
+                // If lecture is an object but missing name, use title or default
+                else if (certScore.lecture) {
+                    certScore.lecture.name = certScore.lecture.name || 
+                                          certScore.lecture.title || 
+                                          `Lecture ${scoreIndex}`;
+                    certScore.lecture.description = certScore.lecture.description || 'No description available';
+                }
+            }
+        } else {
+            // Handle the case where scoreId is a MongoDB ObjectId
+            certificate = await Certificate.findOne({
+                'certScores._id': scoreId
+            }).populate('user', 'name email')
+              .populate('certScores.lecture', 'name description');
+
+            if (!certificate) {
+                return res.status(404).json({
+                    success: false,
+                    message: 'Certificate not found for the given score'
+                });
+            }
+
+            // Find the specific certificate score using Mongoose's id() helper
+            certScore = certificate.certScores.id(scoreId);
+        }
 
         if (!certScore) {
             return res.status(404).json({
@@ -434,24 +672,226 @@ router.get('/download/:certificateId', authJs, async (req, res) => {
             });
         }
 
-        // Generate the PDF
-        const pdfBytes = await CertificateService.generateCertificate(
-            certificate.user,
-            certScore.lecture,
-            certScore.score
-        );
+        // Check if we have the necessary data
+        if (!certScore.lecture) {
+            console.error('No lecture data found in certScore:', certScore);
+            return res.status(404).json({
+                success: false,
+                message: 'Lecture data not found for this certificate',
+                debug: {
+                    certScoreId: certScore._id,
+                    hasLecture: !!certScore.lecture,
+                    lectureId: certScore.lecture?._id || certScore.lecture
+                }
+            });
+        }
 
-        // Set headers for file download
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename="${certScore.lecture.name.replace(/\s+/g, '_')}_Certificate.pdf"`);
-        
-        // Send the PDF
-        res.send(Buffer.from(pdfBytes));
+        // Debug log to see the lecture data
+        console.log('Lecture data before PDF generation:', {
+            lecture: certScore.lecture,
+            hasName: !!certScore.lecture?.name,
+            lectureId: certScore.lecture._id || certScore.lecture,
+            lectureRaw: JSON.stringify(certScore.lecture)
+        });
+
+        try {
+            // Ensure we have the lecture title
+            if (!certScore.lecture.title && certScore.lecture._id) {
+                console.log('Lecture title is missing, trying to populate it...');
+                const Lecture = require('../models/lecture');
+                const lecture = await Lecture.findById(certScore.lecture._id).select('title description');
+                if (lecture) {
+                    certScore.lecture = lecture;
+                    console.log('Successfully populated lecture:', lecture);
+                }
+            }
+
+            // Generate the PDF
+            const pdfBytes = await CertificateService.generateCertificate(
+                certificate.user,
+                certScore.lecture,
+                certScore.score
+            );
+
+            // Create a safe filename
+            const lectureName = certScore.lecture.name || 'certificate';
+            const safeFilename = `${lectureName.replace(/[^\w\s]/gi, '')}_Certificate`.replace(/\s+/g, '_');
+            
+            // Set headers for file download
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}.pdf"`);
+            
+            // Send the PDF
+            res.send(Buffer.from(pdfBytes));
+        } catch (genError) {
+            console.error('Error generating certificate PDF:', genError);
+            throw new Error('Failed to generate certificate PDF');
+        }
     } catch (error) {
         console.error('Error downloading certificate:', error);
         res.status(500).json({
             success: false,
             message: 'Error generating certificate',
+            error: error.message
+        });
+    }
+});
+
+// Helper function to check database connection and collections
+async function checkDatabase() {
+    try {
+        console.log('=== DATABASE STATUS ===');
+        console.log('Mongoose connection state:', mongoose.connection.readyState);
+        
+        // Get database instance
+        const db = mongoose.connection.db;
+        if (!db) {
+            throw new Error('No database connection');
+        }
+        
+        // List all collections
+        const collections = await db.listCollections().toArray();
+        console.log('Available collections:', collections.map(c => c.name));
+        
+        // Check if users collection exists
+        const usersCollection = collections.find(c => c.name === 'users' || c.name === 'Users');
+        if (!usersCollection) {
+            throw new Error('Users collection not found in database');
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('Database check failed:', error);
+        return false;
+    }
+}
+
+// Download total score certificate as PDF
+router.get('/download-total-certificate/:userId', authJs, async (req, res) => {
+    try {
+        console.log('=== Certificate Download Request ===');
+        console.log('Query params:', req.query);
+        
+        // Check database connection first
+        const dbOk = await checkDatabase();
+        if (!dbOk) {
+            return res.status(500).json({
+                success: false,
+                message: 'Database connection error',
+                error: 'Failed to connect to database'
+            });
+        }
+        
+        // Try to get user ID from query parameter first, then from auth
+        let userId = req.params.userId;
+        let user;
+        
+        if (userId) {
+            console.log('=== USER LOOKUP ===');
+            console.log('Looking for user with ID:', userId);
+            
+            try {
+                // Try direct database query as a last resort
+                const db = mongoose.connection.db;
+                const usersCollection = db.collection('users') || db.collection('Users');
+                user = await usersCollection.findOne({
+                    $or: [
+                        { _id: new mongoose.Types.ObjectId(userId) },
+                        { _id: userId },
+                        { email: userId }
+                    ]
+                });
+                
+                console.log('User lookup result:', user ? 'Found' : 'Not found');
+                if (user) {
+                    console.log('User found:', {
+                        _id: user._id,
+                        email: user.email,
+                        name: user.name
+                    });
+                }
+            } catch (dbError) {
+                console.error('Database error during user lookup:', dbError);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Database error',
+                    error: dbError.message
+                });
+            }
+        } 
+        
+        // If not found via query param or no query param, try auth
+        if (!user) {
+            console.log('Trying to get user from auth...');
+            userId = req.user?._id || req.decoded?._id || req.decoded?.id || req.decoded;
+            console.log('Resolved userId from auth:', userId);
+            
+            if (!userId) {
+                console.error('No user ID found in request');
+                return res.status(401).json({
+                    success: false,
+                    message: 'Unauthorized: No user ID found in request',
+                    requestInfo: {
+                        hasUser: !!req.user,
+                        hasDecoded: !!req.decoded,
+                        userKeys: req.user ? Object.keys(req.user) : [],
+                        decodedKeys: req.decoded ? Object.keys(req.decoded) : []
+                    }
+                });
+            }
+            
+            user = await User.findById(userId);
+        }
+        
+        console.log('User lookup result:', user ? 'Found' : 'Not found');
+        
+        if (!user) {
+            console.error('User not found in database with ID:', userId);
+            // Check if any users exist in the database
+            const anyUser = await User.findOne({});
+            console.log('Any user in database:', anyUser ? 'Yes' : 'No');
+            
+            return res.status(404).json({
+                success: false,
+                message: 'User not found in database',
+                userId: userId.toString(),
+                userIdType: typeof userId,
+                databaseHasUsers: !!anyUser
+            });
+        }
+
+        // Get all certificates for the user
+        const certificates = await Certificate.find({ user: userId })
+            .populate('certScores.lecture', 'name description');
+        
+        if (!certificates || certificates.length === 0) {
+            return res.status(404).json({
+                success: false,
+                message: 'No certificates found for this user'
+            });
+        }
+
+        // Generate the total certificate PDF
+        const pdfBuffer = await CertificateService.generateCertificatePDF({
+            userName: user.name,
+            userEmail: user.email,
+            score: certificates[0].totalScore, // Assuming first certificate has the total score
+            issueDate: new Date(),
+            certificateId: certificates[0]._id.toString()
+        });
+        
+        // Set headers for file download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=total-certificate-${user._id}.pdf`);
+        
+        // Send the PDF
+        res.send(pdfBuffer);
+
+    } catch (error) {
+        console.error('Error generating total certificate:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to generate total certificate',
             error: error.message
         });
     }

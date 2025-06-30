@@ -31,6 +31,12 @@ const certificateSchema = new mongoose.Schema({
         required: true,
         unique: true // Each user has only one certificate document
     },
+    totalScore: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
     certScores: [lectureScoreSchema] // Array of scores for each lecture batch
 }, { timestamps: true });
 
@@ -39,38 +45,84 @@ certificateSchema.statics.updateScore = async function(userId, lectureId, assign
     let certificate = await this.findOne({ user: userId });
 
     if (!certificate) {
-        // This case should ideally be handled by enrollment logic
-        // Creating a new certificate when a score is first added.
-        certificate = new this({ user: userId, certScores: [] });
+        certificate = new this({ 
+            user: userId, 
+            certScores: [],
+            totalScore: 0
+        });
     }
 
     let lectureScore = certificate.certScores.find(
         (cs) => cs.lecture.equals(lectureId)
     );
-
-    if (lectureScore) {
-        // If the lecture score already exists, update it, ensuring not to exceed 4 assignments
-        if (lectureScore.assignmentsGraded < 4) {
-            // Calculate new score ensuring it doesn't exceed 100
-            const newScore = lectureScore.score + assignmentScore;
-            lectureScore.score = Math.min(newScore, 100);
-            lectureScore.assignmentsGraded += 1;
-        } else {
-            // Handle case where more than 4 assignments are submitted
-            console.log(`User ${userId} has already submitted 4 assignments for lecture ${lectureId}`);
+    
+    // If this is a new score for the lecture, initialize it
+    if (!lectureScore) {
+        lectureScore = {
+            lecture: lectureId,
+            score: 0,
+            assignmentsGraded: 0,
+            certificateIssued: false
+        };
+        certificate.certScores.push(lectureScore);
+    }
+    
+    // Check if already has 4 graded assignments
+    if (lectureScore.assignmentsGraded >= 4) {
+        return { 
+            certificate,
+            certificateIssued: lectureScore.certificateIssued,
+            score: lectureScore.score
+        };
+    }
+    
+    // Update the score and increment graded assignments
+    const newAssignmentsGraded = lectureScore.assignmentsGraded + 1;
+    lectureScore.score = ((lectureScore.score * lectureScore.assignmentsGraded) + assignmentScore) / newAssignmentsGraded;
+    lectureScore.assignmentsGraded = newAssignmentsGraded;
+    
+    let certificateIssued = false;
+    
+    // Check if all 4 assignments are graded and certificate not yet issued
+    if (lectureScore.assignmentsGraded >= 4 && !lectureScore.certificateIssued) {
+        lectureScore.certificateIssued = true;
+        certificate.totalScore = lectureScore.score; // Update total score
+        certificateIssued = true;
+        
+        // Get user details for email
+        const user = await mongoose.model('User').findById(userId);
+        const lecture = await mongoose.model('Lecture').findById(lectureId);
+        
+        if (user && lecture) {
+            // Send email notification
+            const emailContent = `
+                <h1>Congratulations, ${user.name}!</h1>
+                <p>You have successfully completed all assignments for the lecture: ${lecture.name}.</p>
+                <p>Your final score is: ${lectureScore.score.toFixed(2)}%</p>
+                <p>You can now download your certificate from your dashboard.</p>
+            `;
+            
+            try {
+                await require('../lib/sendEmail')({
+                    to: user.email,
+                    subject: `Certificate of Completion - ${lecture.name}`,
+                    html: emailContent
+                });
+            } catch (emailError) {
+                console.error('Failed to send certificate email:', emailError);
+                // Don't fail the operation if email fails
+            }
         }
-    } else {
-        // If the lecture score doesn't exist, add it. This happens on the first assignment submission for a lecture.
-        // Ensure the initial score doesn't exceed 100
-        const initialScore = Math.min(assignmentScore, 100);
-        certificate.certScores.push({ 
-            lecture: lectureId, 
-            score: initialScore, 
-            assignmentsGraded: 1 
-        });
     }
 
-    return certificate.save();
+    // Save the updated certificate
+    await certificate.save();
+    
+    return { 
+        certificate,
+        certificateIssued,
+        score: lectureScore.score
+    };
 };
 
 // Static method to handle enrollment in a new lecture batch

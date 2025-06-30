@@ -264,16 +264,28 @@ router.post('/login', async (req, res) => {
         const result = await bcrypt.compare(password, user.password);
 
         if (result) {
+            // Include all necessary user information in the token
             const token = jwt.sign(
-                { userId: user._id, isAdmin: user.isAdmin, isSuperAdmin: user.isSuperAdmin },
+                { 
+                    id: user._id,  // Use 'id' for consistency
+                    userId: user._id,  // Keep for backward compatibility
+                    email: user.email,
+                    name: user.name,
+                    isAdmin: user.isAdmin, 
+                    isSuperAdmin: user.isSuperAdmin 
+                },
                 process.env.TOKEN_SECRET_WORD,
                 { expiresIn: '1d' }
             );
 
+            // Don't send sensitive information in the response
+            const { password, ...userWithoutPassword } = user.toObject();
+            
             return res.status(200).json({
-                message: "User authenticated",
+                success: true,
+                message: "User authenticated successfully",
                 token: token,
-                user,
+                user: userWithoutPassword,
             });
         } else {
             return res.status(401).json({ message: "Invalid credentials" });
