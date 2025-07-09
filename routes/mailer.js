@@ -36,7 +36,6 @@ const initTransporter = async () => {
                 }
             });
             console.log('Ethereal test account created:', testAccount.user);
-            console.log('View emails at: https://ethereal.email/');
         } catch (error) {
             console.error('Error creating Ethereal test account:', error);
             throw error;
@@ -80,13 +79,17 @@ router.post('/send-to-all', authJs, async (req, res) => {
         });
         
         // Send email
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
             from: process.env.EMAIL_FROM || `"${process.env.COMPANYNAME || 'MyTeacher App'}" <${process.env.EMAIL_FROM || 'noreply@myteacherapp.com'}>`,
             to: emails.join(','),
             subject,
             text: text || '',
             html: html || ''
         });
+
+        if (process.env.STAG !== 'PRODUCTION') {
+            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        }
         
         // Update mailer record
         mail.status = 'sent';
@@ -131,13 +134,17 @@ router.post('/send-to-user/:userId', authJs, async (req, res) => {
         });
         
         // Send email
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
             from: process.env.EMAIL_FROM || mail.from,
             to: user.email,
             subject,
             text: text || '',
             html: html || ''
         });
+
+        if (process.env.STAG !== 'PRODUCTION') {
+            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        }
         
         // Update mailer record
         mail.status = 'sent';
@@ -183,13 +190,17 @@ router.post('/send-to-admins', authJs, async (req, res) => {
         });
         
         // Send email
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
             from: process.env.EMAIL_FROM || mail.from,
             to: adminEmails.join(','),
             subject,
             text: text || '',
             html: html || ''
         });
+
+        if (process.env.STAG !== 'PRODUCTION') {
+            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        }
         
         // Update mailer record
         mail.status = 'sent';
@@ -233,13 +244,17 @@ router.post('/send-to-admin/:adminId', authJs, async (req, res) => {
         });
         
         // Send email
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
             from: process.env.EMAIL_FROM || mail.from,
             to: admin.email,
             subject,
             text: text || '',
             html: html || ''
         });
+
+        if (process.env.STAG !== 'PRODUCTION') {
+            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        }
         
         // Update mailer record
         mail.status = 'sent';

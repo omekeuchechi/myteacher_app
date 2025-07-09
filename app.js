@@ -59,6 +59,8 @@ const mailerRouter = require('./routes/mailer');
 const socialRoutes = require('./routes/social');
 const assignmentRoutes = require('./routes/assignment');
 const certificateRoutes = require('./routes/certificate');
+const videoRouter = require('./routes/video');
+const uploaderRouter = require('./routes/uploader');
 // const paymentRoutes = require('./routes/paymentRoute');
 
 // Add after other requires
@@ -69,7 +71,7 @@ const { scheduleAIGrading } = require('./lib/cronJob');
 app.use(bodyParser.json());
 app.use(morgan('tiny'));
 app.use(`${api}/user`, userRouter);
-app.use(`${api}/post`, postRouter);
+app.use(`${api}/posts`, postRouter);
 app.use(`${api}/comment`, commentRouter);
 app.use(`${api}/setting`, settingRouter);
 app.use(`${api}/transaction`, transactionRouter);
@@ -87,20 +89,26 @@ app.use(`${api}/mailer`, mailerRouter);
 app.use(`${api}/social`, socialRoutes);
 app.use(`${api}/assignments`, assignmentRoutes);
 app.use(`${api}/certificates`, certificateRoutes);
+app.use(`${api}/video`, videoRouter);
+app.use(`${api}/post_files`, uploaderRouter); // Add this line for the uploader route
 
 // Initialize scheduler
 scheduleLectureUpdates();
 scheduleAIGrading(); // Start the AI grading cron job
 
 // MongoDB connection options
+// MongoDB connection options
 const mongoOptions = {
     useNewUrlParser: true,
     useUnifiedTopology: true,
     serverSelectionTimeoutMS: 30000, // Increase timeout to 30 seconds
     socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+    connectTimeoutMS: 30000, // Increase connection timeout to 30s
     family: 4, // Use IPv4, skip trying IPv6
     retryWrites: true,
-    w: 'majority'
+    w: 'majority',
+    maxPoolSize: 10, // Maximum number of connections in the connection pool
+    // Removed serverApi configuration to avoid API versioning issues
 };
 
 // Database connection with error handling
@@ -112,8 +120,12 @@ const connectWithRetry = async () => {
         
         // Initialize certificate scheduler only after successful DB connection
         if (process.env.NODE_ENV !== 'test') {
-            const CertificateScheduler = require('./services/certificateScheduler');
-            CertificateScheduler.start();
+            try {
+                const CertificateScheduler = require('./services/certificateScheduler');
+                CertificateScheduler.start();
+            } catch (schedulerError) {
+                console.error('❌ Error initializing scheduler:', schedulerError.message);
+            }
         }
     } catch (error) {
         console.error('❌ MongoDB connection error:', error.message);

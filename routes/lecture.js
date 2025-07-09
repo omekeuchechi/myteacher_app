@@ -31,23 +31,25 @@ router.get('/admins', authJs, async (req, res) => {
 
 /**
  * @route   GET /userSpecificLecture
- * @desc    Fetch all lectures that the current user is enrolled in
+ * @desc    Fetch all non-expired lectures that the current user is enrolled in
  * @access  Protected (requires authJs middleware)
  */
 router.get('/userSpecificLecture', authJs, async (req, res) => {
   try {
-    // console.log('Decoded JWT:', req.decoded);
     const userId = req.decoded.userId;
     if (!userId) {
       return res.status(401).json({ message: "Invalid token: user id missing" });
     }
 
-    // Find lectures where the user is in studentsEnrolled array
-    const lectures = await Lecture.find({ studentsEnrolled: userId })
-      .populate('lecturesListed studentsEnrolled');
+    // Find non-expired lectures where the user is in studentsEnrolled array
+    const currentDate = new Date();
+    const lectures = await Lecture.find({ 
+      studentsEnrolled: userId,
+      expiringDate: { $gt: currentDate } // Only include lectures that haven't expired
+    }).populate('lecturesListed studentsEnrolled');
 
     res.json({ lectures });
-    console.log(`User ${userId} fetched their specific lectures`);
+    console.log(`User ${userId} fetched their active lectures`);
   } catch (error) {
     res.status(500).json({ message: "Error fetching user-specific lectures", error: error.message });
   }
