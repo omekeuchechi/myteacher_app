@@ -76,7 +76,7 @@ const authJs = (req, res, next) => {
             return res.status(401).json({
                 success: false,
                 message: 'Session expired',
-                error: 'Your session has expired. Please log in again.'
+                error: 'Your session has    expired. Please log in again.'
             });
         }
         

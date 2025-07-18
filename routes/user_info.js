@@ -15,7 +15,7 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 const path = require('path');
-const sharp = require('sharp');
+const Jimp = require('jimp');
 const stream = require('stream');
 const Pusher = require('pusher');
 const ffmpeg = require('fluent-ffmpeg');
@@ -298,17 +298,24 @@ router.post('/upload/storyImage', authJs, upload.single('storyImage'), async (re
     }
     const folderPath = `${userId}/storyImage`;
     try {
-        // Compress image to ~20KB using sharp
-        let compressedBuffer = await sharp(req.file.buffer)
-            .jpeg({ quality: 40 }) // Start with moderate quality
-            .toBuffer();
-        // Iteratively reduce quality if needed
+        // Compress image using Jimp
+        const image = await Jimp.read(req.file.buffer);
         let quality = 40;
+        let compressedBuffer;
+        
+        // Function to get buffer with quality
+        const getCompressedBuffer = async (img, q) => {
+            const clone = img.clone();
+            return await clone.quality(q).getBufferAsync(Jimp.MIME_JPEG);
+        };
+        
+        // Try initial compression
+        compressedBuffer = await getCompressedBuffer(image, quality);
+        
+        // Reduce quality if needed to get under 20KB
         while (compressedBuffer.length > 20000 && quality > 5) {
             quality -= 5;
-            compressedBuffer = await sharp(req.file.buffer)
-                .jpeg({ quality })
-                .toBuffer();
+            compressedBuffer = await getCompressedBuffer(image, quality);
         }
         // Delete previous storyImage folder
         await deleteCloudinaryFolder(folderPath);
