@@ -17,13 +17,32 @@ app.use(express.json({ limit: '1000mb' }));
 app.use(express.urlencoded({ limit: '1000mb', extended: true }));
 // for cross origin resource sharing
 // this is to allow the frontend to access the backend
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://myteacher.institute',
+  'https://app.myteacher.institute'
+];
+
 app.use(cors({
-  origin: `${process.env.CORS_ORIGIN}`,
-  credentials: true
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD', 'CONNECT', 'TRACE', 'COPY', 'LOCK', 'MKCOL', 'MOVE', 'PROPFIND', 'PROPPATCH', 'UNLOCK', 'VERSION-CONTROL', 'REPORT', 'CHECKOUT', 'CHECKIN', 'UNCHECKOUT', 'MKWORKSPACE', 'UPDATE', 'LABEL', 'MERGE', 'BASELINE-CONTROL', 'MKACTIVITY', 'ACL', 'BIND', 'REBIND', 'UNBIND', 'SEARCH', 'NOTIFY', 'SUBSCRIBE', 'UNSUBSCRIBE', 'PATCH', 'PURGE', 'VIEW', 'COPY', 'MOVE', 'LOCK', 'MKCOL', 'PROPFIND', 'PROPPATCH', 'UNLOCK', 'VERSION-CONTROL', 'REPORT', 'CHECKOUT', 'CHECKIN', 'UNCHECKOUT', 'MKWORKSPACE', 'UPDATE', 'LABEL', 'MERGE', 'BASELINE-CONTROL', 'MKACTIVITY', 'ACL', 'BIND', 'REBIND', 'UNBIND', 'SEARCH', 'NOTIFY', 'SUBSCRIBE', 'UNSUBSCRIBE', 'PATCH', 'PURGE', 'VIEW', 'ALL'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  exposedHeaders: ['Content-Length', 'Content-Range'],
+  maxAge: 600,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
 
-const session = require('express-session');
-const passport = require('passport');
 require('./passport'); 
 
 app.use(session({
@@ -70,27 +89,27 @@ const { scheduleAIGrading } = require('./lib/cronJob');
 // middleware
 app.use(bodyParser.json());
 app.use(morgan('tiny'));
-app.use(`${api}/user`, userRouter);
-app.use(`${api}/posts`, postRouter);
-app.use(`${api}/comment`, commentRouter);
-app.use(`${api}/setting`, settingRouter);
-app.use(`${api}/transaction`, transactionRouter);
-app.use(`${api}/admin`, adminRoutes);
-app.use(`${api}/lecture`, lectureRouter);
-app.use(`${api}/enrollment`, enrollmentRouter);
+app.use(`/user`, userRouter);
+app.use(`/posts`, postRouter);
+app.use(`/comment`, commentRouter);
+app.use(`/setting`, settingRouter);
+app.use(`/transaction`, transactionRouter);
+app.use(`/admin`, adminRoutes);
+app.use(`/lecture`, lectureRouter);
+app.use(`/enrollment`, enrollmentRouter);
 
 // this rout section is for payment gate-way integration logic
 // app.use(`${api}/user/`, paymentRouter);
-app.use(`${api}/payment`, paymentRouter);
-app.use(`${api}/user_info`, userInfoRouter);
-app.use(`${api}/assets`, AssetRouter);
-app.use(`${api}/contactMessage`, contactMessageRouter);
-app.use(`${api}/mailer`, mailerRouter);
-app.use(`${api}/social`, socialRoutes);
-app.use(`${api}/assignments`, assignmentRoutes);
-app.use(`${api}/certificates`, certificateRoutes);
-app.use(`${api}/video`, videoRouter);
-app.use(`${api}/post_files`, uploaderRouter); // Add this line for the uploader route
+app.use(`/payment`, paymentRouter);
+app.use(`/user_info`, userInfoRouter);
+app.use(`/assets`, AssetRouter);
+app.use(`/contactMessage`, contactMessageRouter);
+app.use(`/mailer`, mailerRouter);
+app.use(`/social`, socialRoutes);
+app.use(`/assignments`, assignmentRoutes);
+app.use(`/certificates`, certificateRoutes);
+app.use(`/video`, videoRouter);
+app.use(`/post_files`, uploaderRouter); // Add this line for the uploader route
 
 // Initialize scheduler
 scheduleLectureUpdates();
