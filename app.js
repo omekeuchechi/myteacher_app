@@ -32,7 +32,7 @@ app.use(passport.session());
 // ];
 
 app.use(cors({
-  origin: 'https://myteacher.institute',
+  origin: '*',
   credentials: true
 }));
 // -----------------------------------------------------------
