@@ -26,7 +26,11 @@ app.use(passport.session());
 
 // ----------------- CORS CONFIGURATION -----------------
 const corsOptions = {
-  origin: ['https://myteacher.institute', 'https://www.myteacher.institute'],
+  origin: [
+    'https://myteacher.institute', 
+    'https://www.myteacher.institute',
+    'https://app.myteacher.institute'
+  ],
   credentials: true,
   optionsSuccessStatus: 200
 };
