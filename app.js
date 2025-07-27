@@ -35,13 +35,20 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    // Check if the origin is in the allowed list
-    const allowedOrigins = [
-      'https://myteacher.institute',
-      'http://localhost:5173',
-      'https://www.myteacher.institute',
-      'https://app.myteacher.institute'
-    ];
+    // Define allowed origins based on STAG environment variable
+    const isProduction = process.env.STAG === 'PRODUCTION';
+    console.log('Is production:', isProduction);
+    const allowedOrigins = isProduction 
+      ? [
+          'https://myteacher.institute',
+          'https://www.myteacher.institute',
+          'https://app.myteacher.institute'
+        ]
+      : [
+          'http://localhost:5173',
+          'http://localhost:3000',
+          'http://127.0.0.1:5173'
+        ];
 
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
