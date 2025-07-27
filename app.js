@@ -30,10 +30,14 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // for cross origin resource sharing
-// this is to allow the frontend to access the backend
-const allowedOrigins = ['http://localhost:5173', 'https://myteacher.institute', 'https://app.myteacher.institute'];
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://myteacher.institute',
+  'https://www.myteacher.institute',
+  'https://app.myteacher.institute'
+];
 
-// Add request logging
+// Add request logging with CORS debugging
 app.use((req, res, next) => {
   console.log('Incoming request:', {
     method: req.method,
@@ -41,22 +45,40 @@ app.use((req, res, next) => {
     origin: req.headers.origin,
     headers: req.headers
   });
+  
+  // Set CORS headers for all responses
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  }
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  
   next();
 });
 
+// Apply CORS middleware
 app.use(cors({
   origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return callback(null, origin);
     }
+    console.error('CORS blocked for origin:', origin);
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
-  methods: '*',
-  allowedHeaders: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
   exposedHeaders: ['Content-Length', 'Content-Range', 'X-Total-Count'],
-  maxAge: 86400,
+  maxAge: 600,
+  preflightContinue: false,
   optionsSuccessStatus: 204
 }));
 
