@@ -24,18 +24,14 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ----------------- SIMPLIFIED CORS CONFIG -----------------
-// const allowedOrigins = [
-//   'https://myteacher.institute',
-//   'https://www.myteacher.institute',
-//   'http://localhost:5173'
-// ];
+// ----------------- CORS CONFIGURATION -----------------
+const corsOptions = {
+  origin: ['https://myteacher.institute', 'https://www.myteacher.institute'],
+  credentials: true,
+  optionsSuccessStatus: 200
+};
 
-app.use(cors({
-  origin: '*',
-  credentials: true
-}));
-// -----------------------------------------------------------
+app.use(cors(corsOptions));
 
 // Logging incoming requests
 app.use((req, res, next) => {
