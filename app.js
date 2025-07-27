@@ -15,34 +15,9 @@ const app = express();
 // Increase limit to 10mb (or higher if needed)
 app.use(express.json({ limit: '1000mb' }));
 app.use(express.urlencoded({ limit: '1000mb', extended: true }));
-// for cross origin resource sharing
-// this is to allow the frontend to access the backend
-const allowedOrigins = [
-  'http://localhost:5173',
-  'https://myteacher.institute',
-  'https://app.myteacher.institute'
-];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD', 'CONNECT', 'TRACE', 'COPY', 'LOCK', 'MKCOL', 'MOVE', 'PROPFIND', 'PROPPATCH', 'UNLOCK', 'VERSION-CONTROL', 'REPORT', 'CHECKOUT', 'CHECKIN', 'UNCHECKOUT', 'MKWORKSPACE', 'UPDATE', 'LABEL', 'MERGE', 'BASELINE-CONTROL', 'MKACTIVITY', 'ACL', 'BIND', 'REBIND', 'UNBIND', 'SEARCH', 'NOTIFY', 'SUBSCRIBE', 'UNSUBSCRIBE', 'PATCH', 'PURGE', 'VIEW', 'COPY', 'MOVE', 'LOCK', 'MKCOL', 'PROPFIND', 'PROPPATCH', 'UNLOCK', 'VERSION-CONTROL', 'REPORT', 'CHECKOUT', 'CHECKIN', 'UNCHECKOUT', 'MKWORKSPACE', 'UPDATE', 'LABEL', 'MERGE', 'BASELINE-CONTROL', 'MKACTIVITY', 'ACL', 'BIND', 'REBIND', 'UNBIND', 'SEARCH', 'NOTIFY', 'SUBSCRIBE', 'UNSUBSCRIBE', 'PATCH', 'PURGE', 'VIEW', 'ALL'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
-  exposedHeaders: ['Content-Length', 'Content-Range'],
-  maxAge: 600,
-  preflightContinue: false,
-  optionsSuccessStatus: 204
-}));
-
+const session = require('express-session');
+const passport = require('passport');
 require('./passport'); 
 
 app.use(session({
@@ -54,6 +29,36 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// for cross origin resource sharing
+// this is to allow the frontend to access the backend
+const allowedOrigins = ['http://localhost:5173', 'https://myteacher.institute', 'https://app.myteacher.institute'];
+
+// Add request logging
+app.use((req, res, next) => {
+  console.log('Incoming request:', {
+    method: req.method,
+    url: req.url,
+    origin: req.headers.origin,
+    headers: req.headers
+  });
+  next();
+});
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: '*',
+  allowedHeaders: '*',
+  exposedHeaders: ['Content-Length', 'Content-Range', 'X-Total-Count'],
+  maxAge: 86400,
+  optionsSuccessStatus: 204
+}));
 
 const api = process.env.API_URL;
 const CONNECT_DB = process.env.DATABASE_CONN;
