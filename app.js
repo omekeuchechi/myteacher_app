@@ -25,17 +25,8 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // ----------------- CORS CONFIGURATION -----------------
-const corsOptions = {
-  origin: [
-    'https://myteacher.institute', 
-    'https://www.myteacher.institute',
-    'https://app.myteacher.institute'
-  ],
-  credentials: true,
-  optionsSuccessStatus: 200
-};
-
-app.use(cors(corsOptions));
+app.use(cors());
+app.options('*', cors());
 
 // Logging incoming requests
 app.use((req, res, next) => {
