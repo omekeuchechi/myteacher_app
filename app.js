@@ -26,7 +26,7 @@ app.use(passport.session());
 
 // ----------------- CORS CONFIGURATION -----------------
 app.use(cors({
-  origin: 'https://myteacher.institute',
+  origin: /*'https://myteacher.institute'*/ 'http://localhost:5173',
   credentials: true
 }));
 
