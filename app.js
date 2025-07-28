@@ -25,31 +25,10 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 // ----------------- CORS CONFIGURATION -----------------
-const allowedOrigins = [
-  'https://myteacher.institute',
-  'https://www.myteacher.institute',
-  'https://app.myteacher.institute'
-];
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  credentials: true,
-  methods: '*',
-  allowedHeaders: '*',
-  optionsSuccessStatus: 200
-};
-
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.use(cors({
+  origin: 'https://myteacher.institute',
+  credentials: true
+}));
 
 // Logging incoming requests
 app.use((req, res, next) => {
