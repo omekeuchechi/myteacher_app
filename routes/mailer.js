@@ -4,26 +4,29 @@ const Mailer = require('../models/mailer');
 const User = require('../models/user');
 const authJs = require('../middlewares/auth');
 const nodemailer = require('nodemailer');
-
+require('dotenv').config();
 
 // Configure nodemailer based on environment
 let transporter;
 
 const initTransporter = async () => {
     if (process.env.STAG === 'PRODUCTION') {
-        // Production configuration (Mailtrap)
+        // Production configuration (Gmail SMTP)
         transporter = nodemailer.createTransport({
-            host: process.env.EMAIL_HOST,
-            port: parseInt(process.env.EMAIL_PORT),
-            secure: process.env.EMAIL_SECURE === 'true',
+            service: 'gmail',
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true,
             auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS
-            }
+                user: process.env.GMAIL_APP_EMAIL,
+                pass: process.env.GMAIL_APP_PASSWORD
+            },
+            debug: true,
+            logger: true
         });
-        console.log('Using Mailtrap for email in production environment');
+        console.log('✅ Gmail SMTP transporter ready');
     } else {
-        // Development configuration (Ethereal) - Using STAG=development
+        // Development configuration (Ethereal)
         try {
             const testAccount = await nodemailer.createTestAccount();
             transporter = nodemailer.createTransport({
@@ -33,11 +36,15 @@ const initTransporter = async () => {
                 auth: {
                     user: testAccount.user,
                     pass: testAccount.pass
-                }
+                },
+                debug: true,
+                logger: true
             });
-            console.log('Ethereal test account created:', testAccount.user);
+            console.log('✅ Ethereal test account created:', testAccount.user);
+            console.log('🔑 Password:', testAccount.pass);
+            console.log('📧 View sent emails at: https://ethereal.email/login');
         } catch (error) {
-            console.error('Error creating Ethereal test account:', error);
+            console.error('❌ Error creating Ethereal test account:', error);
             throw error;
         }
     }
@@ -46,31 +53,55 @@ const initTransporter = async () => {
 // Initialize the transporter
 initTransporter().catch(console.error);
 
+// Generate email HTML template
+const generateEmailTemplate = (content, title = 'MyTeacher App Notification') => {
+    return `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+            <div style="background-color: #4a6fdc; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+                <h1 style="color: white; margin: 0;">${title}</h1>
+            </div>
+            <div style="padding: 20px;">
+                ${content}
+                <p style="margin-top: 30px;">
+                    <strong>Time:</strong> ${new Date().toLocaleString()}<br>
+                    <strong>Environment:</strong> ${process.env.STAG || 'development'}
+                </p>
+            </div>
+            <div style="text-align: center; padding: 20px; color: #666; font-size: 14px; border-top: 1px solid #e0e0e0;">
+                <p>This is an automated message from MyTeacher App. Please do not reply to this email.</p>
+                <p>© ${new Date().getFullYear()} MyTeacher App. All rights reserved.</p>
+            </div>
+        </div>
+    `;
+};
+
 // Send email to all users (Admin only)
 router.post('/send-to-all', authJs, async (req, res) => {
     try {
         const { subject, text, html } = req.body;
 
         const isAdmin = req.decoded && req.decoded.isAdmin;
-
         if (!isAdmin) {
-          return res.status(403).json({ message: "Unauthorized, admin only" });
+            return res.status(403).json({ message: "Unauthorized, admin only" });
         }
 
-        if (!subject || !text || !html) {
-            return res.status(400).json({ message: 'Subject, text, and HTML are required' });
+        if (!subject || !text) {
+            return res.status(400).json({ message: 'Subject and text content are required' });
         }
         
         // Get all active users
         const users = await User.find({ isVerified: true }, 'email');
         const emails = users.map(user => user.email);
         
+        // Generate HTML content if not provided
+        const emailHtml = html || generateEmailTemplate(text.replace(/\n/g, '<br>'), subject);
+        
         // Create mailer record
         const mail = new Mailer({
             to: emails,
             subject,
             text: text || '',
-            html: html || '',
+            html: emailHtml,
             metadata: {
                 sentBy: req.user._id,
                 type: 'bulk',
@@ -80,15 +111,17 @@ router.post('/send-to-all', authJs, async (req, res) => {
         
         // Send email
         const info = await transporter.sendMail({
-            from: process.env.EMAIL_FROM || `"${process.env.COMPANYNAME || 'MyTeacher App'}" <${process.env.EMAIL_FROM || 'noreply@myteacherapp.com'}>`,
+            from: `"${process.env.APP_NAME || 'MyTeacher App'}" <${process.env.GMAIL_APP_EMAIL}>`,
             to: emails.join(','),
             subject,
             text: text || '',
-            html: html || ''
+            html: emailHtml
         });
 
         if (process.env.STAG !== 'PRODUCTION') {
-            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+            console.log('📧 Email sent! Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        } else {
+            console.log('📧 Email sent to %d recipients', emails.length);
         }
         
         // Update mailer record
@@ -96,10 +129,17 @@ router.post('/send-to-all', authJs, async (req, res) => {
         mail.sentAt = new Date();
         await mail.save();
         
-        res.status(200).json({ message: 'Email sent to all users successfully', mail });
+        res.status(200).json({ 
+            message: `Email sent to ${emails.length} users successfully`,
+            mailId: mail._id,
+            previewUrl: process.env.STAG !== 'PRODUCTION' ? nodemailer.getTestMessageUrl(info) : null
+        });
     } catch (error) {
-        console.error('Error sending email to all users:', error);
-        res.status(500).json({ message: 'Failed to send email', error: error.message });
+        console.error('❌ Error sending email to all users:', error);
+        res.status(500).json({ 
+            message: 'Failed to send email', 
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
     }
 });
 
@@ -120,12 +160,15 @@ router.post('/send-to-user/:userId', authJs, async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
         
+        // Generate HTML content if not provided
+        const emailHtml = html || generateEmailTemplate(text.replace(/\n/g, '<br>'), subject);
+        
         // Create mailer record
         const mail = new Mailer({
             to: [user.email],
             subject,
             text: text || '',
-            html: html || '',
+            html: emailHtml,
             metadata: {
                 sentBy: req.user._id,
                 type: 'single',
@@ -135,15 +178,17 @@ router.post('/send-to-user/:userId', authJs, async (req, res) => {
         
         // Send email
         const info = await transporter.sendMail({
-            from: process.env.EMAIL_FROM || mail.from,
+            from: `"${process.env.APP_NAME || 'MyTeacher App'}" <${process.env.GMAIL_APP_EMAIL}>`,
             to: user.email,
             subject,
             text: text || '',
-            html: html || ''
+            html: emailHtml
         });
 
         if (process.env.STAG !== 'PRODUCTION') {
-            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+            console.log('📧 Email sent! Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        } else {
+            console.log('📧 Email sent to user');
         }
         
         // Update mailer record
@@ -151,10 +196,17 @@ router.post('/send-to-user/:userId', authJs, async (req, res) => {
         mail.sentAt = new Date();
         await mail.save();
         
-        res.status(200).json({ message: 'Email sent to user successfully', mail });
+        res.status(200).json({ 
+            message: 'Email sent to user successfully',
+            mailId: mail._id,
+            previewUrl: process.env.STAG !== 'PRODUCTION' ? nodemailer.getTestMessageUrl(info) : null
+        });
     } catch (error) {
-        console.error('Error sending email to user:', error);
-        res.status(500).json({ message: 'Failed to send email', error: error.message });
+        console.error('❌ Error sending email to user:', error);
+        res.status(500).json({ 
+            message: 'Failed to send email', 
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
     }
 });
 
@@ -176,12 +228,15 @@ router.post('/send-to-admins', authJs, async (req, res) => {
         
         const adminEmails = admins.map(admin => admin.email);
         
+        // Generate HTML content if not provided
+        const emailHtml = html || generateEmailTemplate(text.replace(/\n/g, '<br>'), subject);
+        
         // Create mailer record
         const mail = new Mailer({
             to: adminEmails,
             subject,
             text: text || '',
-            html: html || '',
+            html: emailHtml,
             metadata: {
                 sentBy: req.user._id,
                 type: 'admin-bulk',
@@ -191,15 +246,17 @@ router.post('/send-to-admins', authJs, async (req, res) => {
         
         // Send email
         const info = await transporter.sendMail({
-            from: process.env.EMAIL_FROM || mail.from,
+            from: `"${process.env.APP_NAME || 'MyTeacher App'}" <${process.env.GMAIL_APP_EMAIL}>`,
             to: adminEmails.join(','),
             subject,
             text: text || '',
-            html: html || ''
+            html: emailHtml
         });
 
         if (process.env.STAG !== 'PRODUCTION') {
-            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+            console.log('📧 Email sent! Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        } else {
+            console.log('📧 Email sent to %d admins', adminEmails.length);
         }
         
         // Update mailer record
@@ -207,10 +264,17 @@ router.post('/send-to-admins', authJs, async (req, res) => {
         mail.sentAt = new Date();
         await mail.save();
         
-        res.status(200).json({ message: 'Email sent to all admins successfully', mail });
+        res.status(200).json({ 
+            message: `Email sent to ${adminEmails.length} admins successfully`,
+            mailId: mail._id,
+            previewUrl: process.env.STAG !== 'PRODUCTION' ? nodemailer.getTestMessageUrl(info) : null
+        });
     } catch (error) {
-        console.error('Error sending email to admins:', error);
-        res.status(500).json({ message: 'Failed to send email to admins', error: error.message });
+        console.error('❌ Error sending email to admins:', error);
+        res.status(500).json({ 
+            message: 'Failed to send email to admins', 
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
     }
 });
 
@@ -230,12 +294,15 @@ router.post('/send-to-admin/:adminId', authJs, async (req, res) => {
             return res.status(404).json({ message: 'Admin not found' });
         }
         
+        // Generate HTML content if not provided
+        const emailHtml = html || generateEmailTemplate(text.replace(/\n/g, '<br>'), subject);
+        
         // Create mailer record
         const mail = new Mailer({
             to: [admin.email],
             subject,
             text: text || '',
-            html: html || '',
+            html: emailHtml,
             metadata: {
                 sentBy: req.user._id,
                 type: 'admin-single',
@@ -245,15 +312,17 @@ router.post('/send-to-admin/:adminId', authJs, async (req, res) => {
         
         // Send email
         const info = await transporter.sendMail({
-            from: process.env.EMAIL_FROM || mail.from,
+            from: `"${process.env.APP_NAME || 'MyTeacher App'}" <${process.env.GMAIL_APP_EMAIL}>`,
             to: admin.email,
             subject,
             text: text || '',
-            html: html || ''
+            html: emailHtml
         });
 
         if (process.env.STAG !== 'PRODUCTION') {
-            console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
+            console.log('📧 Email sent! Preview URL: %s', nodemailer.getTestMessageUrl(info));
+        } else {
+            console.log('📧 Email sent to admin');
         }
         
         // Update mailer record
@@ -261,10 +330,17 @@ router.post('/send-to-admin/:adminId', authJs, async (req, res) => {
         mail.sentAt = new Date();
         await mail.save();
         
-        res.status(200).json({ message: 'Email sent to admin successfully', mail });
+        res.status(200).json({ 
+            message: 'Email sent to admin successfully',
+            mailId: mail._id,
+            previewUrl: process.env.STAG !== 'PRODUCTION' ? nodemailer.getTestMessageUrl(info) : null
+        });
     } catch (error) {
-        console.error('Error sending email to admin:', error);
-        res.status(500).json({ message: 'Failed to send email to admin', error: error.message });
+        console.error('❌ Error sending email to admin:', error);
+        res.status(500).json({ 
+            message: 'Failed to send email to admin', 
+            error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+        });
     }
 });
 

@@ -556,54 +556,197 @@ router.post('/forgot-password', async (req, res) => {
     try {
         const { email } = req.body;
         if (!email) {
-            return res.status(400).json({ message: "Email is required" });
+            return res.status(400).json({ 
+                success: false,
+                message: "Email is required" 
+            });
         }
 
         const user = await User.findOne({ email });
         if (!user) {
-            // Don't reveal if user exists for security
-            return res.json({ success: true, message: 'If this email exists, a reset link has been sent' });
+            // For security, don't reveal if the email exists
+            return res.json({ 
+                success: true, 
+                message: 'If this email exists, a password reset link has been sent.' 
+            });
         }
 
-        const resetToken = jwt.sign({ userId: user._id }, process.env.TOKEN_SECRET_WORD, { expiresIn: '15m' });
+        // Generate reset token (15 minutes expiry)
+        const resetToken = jwt.sign(
+            { userId: user._id },
+            process.env.TOKEN_SECRET_WORD,
+            { expiresIn: '15m' }
+        );
+
+        // Save token to user
         user.resetToken = resetToken;
-        user.resetTokenExpiration = Date.now() + 900000; // 15 minutes
+        user.resetTokenExpiration = Date.now() + 15 * 60 * 1000; // 15 minutes
         await user.save();
 
+        // Create reset link
         const resetLink = `${process.env.CLIENT_URL}/reset-password?token=${resetToken}`;
-        const html = `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Password Reset Request</h2>
-            
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
-              <p style="font-size: 16px; margin-bottom: 20px;">
-                We received a request to reset your password. Click the button below to reset it.
-                This link will expire in 15 minutes.
-              </p>
-              
-              <div style="text-align: center;">
-                <a href="${resetLink}" 
-                   style="display: inline-block; background-color: #3498db; color: white; 
-                          padding: 12px 24px; text-decoration: none; border-radius: 4px;">
-                  Reset Password
-                </a>
-              </div>
+        
+        // Email template
+        const emailContent = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <div style="background-color: #4a6fdc; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+                    <h1 style="color: white; margin: 0;">Password Reset Request</h1>
+                </div>
+                <div style="padding: 20px; background-color: #f8f9fa; border-radius: 0 0 8px 8px;">
+                    <p>Hello ${user.name || 'there'},</p>
+                    <p>We received a request to reset your password. Click the button below to proceed:</p>
+                    
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="${resetLink}" 
+                           style="display: inline-block; background-color: #4a6fdc; color: white; 
+                                  padding: 12px 24px; text-decoration: none; border-radius: 4px;">
+                            Reset Password
+                        </a>
+                    </div>
+                    
+                    <p>This link will expire in 15 minutes for security reasons.</p>
+                    <p>If you didn't request this, please ignore this email or contact support if you have concerns.</p>
+                    
+                    <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0; color: #666; font-size: 14px;">
+                        <p>If the button doesn't work, copy and paste this link into your browser:</p>
+                        <p style="word-break: break-all;">${resetLink}</p>
+                    </div>
+                </div>
+                <div style="text-align: center; color: #95a5a6; font-size: 12px; margin-top: 20px;">
+                    <p>This is an automated message from ${process.env.APP_NAME || 'MyTeacher App'}. Please do not reply to this email.</p>
+                    <p> ${new Date().getFullYear()} ${process.env.APP_NAME || 'MyTeacher App'}. All rights reserved.</p>
+                </div>
             </div>
-            
-            <p style="text-align: center; color: #7f8c8d; font-size: 14px;">
-              Or copy this link: <span style="word-break: break-all;">${resetLink}</span>
-            </p>
-            
-            <p style="font-size: 12px; color: #95a5a6; text-align: center; margin-top: 30px;">
-              If you didn't request this, please ignore this email.
-            </p>
-          </div>
         `;
 
-        await sendEmail(email, 'Password Reset Request', html);
-        return res.json({ success: true, message: 'If this email exists, a reset link has been sent' });
-    } catch (err) {
-        return res.status(500).json({ message: 'Error processing request', error: err.message });
+        // Send email
+        await sendEmail(
+            user.email,
+            'Password Reset Request',
+            emailContent
+        );
+
+        return res.json({ 
+            success: true, 
+            message: 'If this email exists, a password reset link has been sent.' 
+        });
+
+    } catch (error) {
+        console.error('Password reset error:', error);
+        return res.status(500).json({ 
+            success: false,
+            message: 'An error occurred while processing your request',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+});
+
+// Reset password
+router.post('/reset-password', async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+        
+        // Validate input
+        if (!token || !newPassword) {
+            return res.status(400).json({ 
+                success: false,
+                message: 'Token and new password are required',
+                error: 'MISSING_FIELDS'
+            });
+        }
+
+        if (newPassword.length < 8) {
+            return res.status(400).json({
+                success: false,
+                message: 'Password must be at least 8 characters long',
+                error: 'PASSWORD_TOO_SHORT'
+            });
+        }
+
+        // Verify token and find user
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.TOKEN_SECRET_WORD);
+        } catch (err) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid or expired token',
+                error: 'INVALID_TOKEN'
+            });
+        }
+
+        const user = await User.findOne({
+            _id: decoded.userId,
+            resetToken: token,
+            resetTokenExpiration: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({ 
+                success: false,
+                message: 'Invalid or expired token',
+                error: 'INVALID_TOKEN'
+            });
+        }
+
+        // Check if new password is the same as old password
+        const isSamePassword = await bcrypt.compare(newPassword, user.password);
+        if (isSamePassword) {
+            return res.status(400).json({
+                success: false,
+                message: 'New password cannot be the same as the old password',
+                error: 'SAME_PASSWORD'
+            });
+        }
+
+        // Update password
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(newPassword, salt);
+        user.resetToken = undefined;
+        user.resetTokenExpiration = undefined;
+        await user.save();
+
+        // Send confirmation email
+        const emailContent = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+                <div style="background-color: #4caf50; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;">
+                    <h1 style="color: white; margin: 0;">Password Updated Successfully</h1>
+                </div>
+                <div style="padding: 20px; background-color: #f8f9fa; border-radius: 0 0 8px 8px;">
+                    <p>Hello ${user.name || 'there'},</p>
+                    <p>Your password has been successfully updated. If you didn't make this change, please contact our support team immediately.</p>
+                    
+                    <div style="margin-top: 30px; padding: 15px; background-color: #e8f5e9; border-radius: 4px;">
+                        <p style="margin: 0; color: #2e7d32;">
+                            <strong>Security Tip:</strong> For your security, we recommend using a strong, unique password and enabling two-factor authentication if available.
+                        </p>
+                    </div>
+                </div>
+                <div style="text-align: center; color: #95a5a6; font-size: 12px; margin-top: 20px;">
+                    <p>This is an automated message from ${process.env.APP_NAME || 'MyTeacher App'}. Please do not reply to this email.</p>
+                    <p> ${new Date().getFullYear()} ${process.env.APP_NAME || 'MyTeacher App'}. All rights reserved.</p>
+                </div>
+            </div>
+        `;
+
+        await sendEmail(
+            user.email,
+            'Your Password Has Been Updated',
+            emailContent
+        );
+
+        return res.json({ 
+            success: true, 
+            message: 'Password has been reset successfully' 
+        });
+
+    } catch (error) {
+        console.error('Password reset error:', error);
+        return res.status(500).json({ 
+            success: false,
+            message: 'An error occurred while resetting your password',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 });
 
@@ -632,62 +775,6 @@ router.post('/request-reset-password', async (req, res) => {
     } catch (err) {
         console.error(err);
         return res.status(500).json({ success: false, message: 'Server error' });
-    }
-});
-
-// Reset password
-router.post('/reset-password', async (req, res) => {
-    try {
-        const { token, newPassword } = req.body;
-        if (!token || !newPassword) {
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Token and new password are required',
-                error: 'MISSING_FIELDS'
-            });
-        }
-
-        // Verify token
-        const decoded = jwt.verify(token, process.env.TOKEN_SECRET_WORD);
-        const user = await User.findOne({
-            _id: decoded.userId,
-            resetToken: token,
-            resetTokenExpiration: { $gt: Date.now() }
-        });
-
-        if (!user) {
-            return res.status(400).json({ 
-                success: false,
-                message: 'Invalid or expired token',
-                error: 'INVALID_TOKEN'
-            });
-        }
-
-        // Update password
-        const salt = await bcrypt.genSalt(10);
-        user.password = await bcrypt.hash(newPassword, salt);
-        user.resetToken = undefined;
-        user.resetTokenExpiration = undefined;
-        await user.save();
-
-        return res.status(200).json({ 
-            success: true, 
-            message: 'Password updated successfully'
-        });
-    } catch (err) {
-        console.error(err);
-        if (err.name === 'JsonWebTokenError') {
-            return res.status(400).json({ 
-                success: false,
-                message: 'Invalid token',
-                error: 'INVALID_TOKEN'
-            });
-        }
-        return res.status(500).json({ 
-            success: false,
-            message: 'Server error',
-            error: 'SERVER_ERROR'
-        });
     }
 });
 
