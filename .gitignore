@@ -2,4 +2,4 @@
 *.env
 
 # Google Cloud credentials
-config/google-service-account.json
+config/uniqueauth12-7377722c5ce5.json

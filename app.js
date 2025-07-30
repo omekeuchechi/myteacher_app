@@ -75,7 +75,7 @@ app.use(`/comment`, commentRouter);
 app.use(`/setting`, settingRouter);
 app.use(`/transaction`, transactionRouter);
 app.use(`/admin`, adminRoutes);
-app.use(`/lecture`, lectureRouter);
+app.use(`/lectures`, lectureRouter);
 app.use(`/enrollment`, enrollmentRouter);
 app.use(`/payment`, paymentRouter);
 app.use(`/user_info`, userInfoRouter);

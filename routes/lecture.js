@@ -285,4 +285,44 @@ router.get('/start-meeting/:lectureId', authJs, async (req, res) => {
   }
 });
 
+// Get all lectures for a specific user
+router.get('/user/:userId', authJs, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Check if user exists
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Find all lectures where the user is either a student or an admin
+    const currentDate = new Date();
+    const lectures = await Lecture.find({
+      $or: [
+        { studentsEnrolled: userId },
+        { lecturesListed: userId }
+      ],
+      expiringDate: { $gt: currentDate } // Only include non-expired lectures
+    })
+    .populate('lecturesListed', 'name email') // Populate admin details
+    .populate('studentsEnrolled', 'name email') // Populate student details
+    .populate('courseId', 'course description'); // Populate course details
+    
+    res.json({ 
+      success: true, 
+      count: lectures.length,
+      lectures 
+    });
+    
+  } catch (error) {
+    console.error('Error fetching user lectures:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error fetching user lectures',
+      error: error.message 
+    });
+  }
+});
+
 module.exports = router;

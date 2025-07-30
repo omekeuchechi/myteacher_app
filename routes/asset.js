@@ -14,13 +14,39 @@ const Lecture = require('../models/lecture');
 // Multer removed: handle raw stream upload
 
 // Google Drive setup
-const KEYFILEPATH = path.join(__dirname, '../config/google-service-account.json'); // path to your service account key
 const SCOPES = ['https://www.googleapis.com/auth/drive'];
-const auth = new google.auth.GoogleAuth({
-  keyFile: KEYFILEPATH,
-  scopes: SCOPES,
-});
-const drive = google.drive({ version: 'v3', auth });
+let drive;
+
+// Initialize Google Drive with better error handling
+async function initializeDrive() {
+  try {
+    const auth = new google.auth.GoogleAuth({
+      keyFile:/* process.env.GOOGLE_APPLICATION_CREDENTIALS || */path.join(__dirname, '../config/uniqueauth12-7377722c5ce5.json'),
+      scopes: SCOPES,
+    });
+    
+    // Test the authentication
+    const authClient = await auth.getClient();
+    await auth.getAccessToken();
+    
+    drive = google.drive({ version: 'v3', auth });
+    console.log('Google Drive API initialized successfully');
+    return drive;
+  } catch (error) {
+    console.error('Failed to initialize Google Drive:', error.message);
+    if (error.message.includes('ENOENT')) {
+      console.error('Service account file not found. Please check the path:', 
+        process.env.GOOGLE_APPLICATION_CREDENTIALS || path.join(__dirname, '../config/google-service-account.json'));
+    } else if (error.message.includes('invalid_grant')) {
+      console.error('Invalid JWT signature. The service account key might be invalid or expired.');
+      console.error('Please generate a new service account key from Google Cloud Console.');
+    }
+    throw error;
+  }
+}
+
+// Initialize drive immediately
+initializeDrive().catch(console.error);
 
 // Your Google Drive folder ID (shared with service account)
 const DRIVE_FOLDER_ID = process.env.GDRIVE_FOLDER_ID;
@@ -242,17 +268,86 @@ router.delete('/:id', authJs, async (req, res) => {
 // Download asset from Google Drive (auth required)
 router.get('/download/:id', authJs, async (req, res) => {
   try {
+    console.log(`Download request for asset ID: ${req.params.id}`);
+    
+    // Ensure Google Drive is initialized
+    if (!drive) {
+      try {
+        await initializeDrive();
+      } catch (error) {
+        console.error('Failed to initialize Google Drive:', error);
+        return res.status(500).json({ 
+          message: 'Failed to initialize Google Drive',
+          error: error.message
+        });
+      }
+    }
+    
+    // Find the asset in the database
     const asset = await Asset.findById(req.params.id);
-    if (!asset) return res.status(404).json({ message: 'Asset not found' });
+    if (!asset) {
+      console.log('Asset not found in database');
+      return res.status(404).json({ message: 'Asset not found in database' });
+    }
 
-    const file = await drive.files.get(
-      { fileId: asset.driveFileId, alt: 'media' },
-      { responseType: 'stream' }
-    );
-    res.setHeader('Content-Disposition', `attachment; filename="${asset.name}"`);
-    file.data.pipe(res);
+    // Check if user has access to the lecture this asset belongs to
+    const hasAccess = await Lecture.findOne({
+      _id: asset.lectureId,
+      studentsEnrolled: req.decoded.userId
+    });
+
+    if (!hasAccess && !req.decoded.isAdmin) {
+      return res.status(403).json({ message: 'You do not have permission to download this asset' });
+    }
+
+    try {
+      // Get file metadata first to check if it exists
+      await drive.files.get({
+        fileId: asset.driveFileId,
+        fields: 'id, name, mimeType, size'
+      });
+
+      // If we get here, the file exists - now get the actual content
+      const file = await drive.files.get(
+        { fileId: asset.driveFileId, alt: 'media' },
+        { responseType: 'stream' }
+      );
+
+      // Set appropriate headers
+      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(asset.name)}"`);
+      res.setHeader('Content-Type', asset.mimeType || 'application/octet-stream');
+      
+      // Handle download errors
+      file.data.on('error', (err) => {
+        console.error('Error streaming file:', err);
+        if (!res.headersSent) {
+          res.status(500).json({ 
+            message: 'Error streaming file', 
+            error: err.message 
+          });
+        }
+      });
+
+      // Pipe the file to the response
+      file.data.pipe(res);
+      
+    } catch (driveError) {
+      console.error('Google Drive error:', driveError);
+      if (driveError.code === 404) {
+        return res.status(404).json({ 
+          message: 'File not found in Google Drive',
+          details: 'The file exists in our database but not in Google Drive.'
+        });
+      }
+      throw driveError; // Re-throw to be caught by the outer catch
+    }
   } catch (error) {
-    res.status(500).json({ message: 'Download failed', error: error.message });
+    console.error('Download failed:', error);
+    res.status(500).json({ 
+      message: 'Download failed', 
+      error: error.message,
+      code: error.code
+    });
   }
 });
 
