@@ -62,18 +62,6 @@ router.post('/create', async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 12);
         const token = jwt.sign({ email }, process.env.TOKEN_SECRET_WORD, { expiresIn: '15m' });
 
-        // 1. First create and save the user
-        const user = new User({ 
-            name, 
-            email, 
-            password: hashedPassword, 
-            userCourse, 
-            verificationToken: token, 
-            isVerified: false 
-        });
-        await user.save();
-
-        // 2. Then send the verification email
         const verificationLink = `${process.env.CLIENT_URL}/verify-email?token=${token}`;
         const html = `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -105,13 +93,16 @@ router.post('/create', async (req, res) => {
         `;
 
         await sendEmail(email, 'Verify Your Email', html);
+
+        const user = new User({ name, email, password: hashedPassword, userCourse, verificationToken: token, isVerified: false });
+        const response = await user.save();
         await pushDashboardStats();
 
         const viewResponse = {
-            _id: user._id,
-            name: user.name,
-            email: user.email,
-            userCourse: user.userCourse,
+            _id: response._id,
+            name: response.name,
+            email: response.email,
+            userCourse: response.userCourse,
         };
 
         // Pusher event: user created
@@ -121,7 +112,6 @@ router.post('/create', async (req, res) => {
             user: viewResponse
         });
     } catch (err) {
-        console.error('Registration error:', err);
         return res.status(500).json({
             message: "Error creating user",
             error: err.message
