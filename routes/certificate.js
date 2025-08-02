@@ -176,6 +176,7 @@ router.get('/student/results', authJs, async (req, res) => {
                 certificateId: cert._id,
                 userId: cert.user?._id || cert.user,
                 certScores: (cert.certScores || []).map(score => ({
+                    _id: score._id, // Add the score's own ID
                     lecture: {
                         id: score.lecture?._id,
                         name: score.lecture?.name,
@@ -183,7 +184,9 @@ router.get('/student/results', authJs, async (req, res) => {
                     },
                     score: score.score,
                     grade: score.grade,
-                    dateAwarded: score.dateAwarded
+                    dateAwarded: score.dateAwarded,
+                    // Construct the full download URL
+                    downloadUrl: `${process.env.BASE_URL}/certificates/download/${score._id}`
                 })).filter(score => score.lecture && score.lecture.id), // Filter out any invalid lecture entries
                 createdAt: cert.createdAt,
                 updatedAt: cert.updatedAt
@@ -554,6 +557,28 @@ function calculateGrade(score) {
 router.get('/download/:scoreId', async (req, res) => {
     try {
         const { scoreId } = req.params;
+
+        // Add a check for malformed IDs ending in '-undefined'
+        if (scoreId && scoreId.endsWith('-undefined')) {
+            console.error('Malformed scoreId received, likely from a client-side error:', scoreId);
+            return res.status(400).json({
+                success: false,
+                message: 'The request contained a malformed ID, suggesting a client-side error where a value was undefined.',
+                receivedId: scoreId
+            });
+        }
+
+
+        // Add a check for malformed IDs ending in '-undefined'
+        if (scoreId && scoreId.endsWith('-undefined')) {
+            console.error('Malformed scoreId received, likely from a client-side error:', scoreId);
+            return res.status(400).json({
+                success: false,
+                message: 'The request contained a malformed ID, suggesting a client-side error where a value was undefined.',
+                receivedId: scoreId
+            });
+        }
+
         const authenticatedUser = req.decoded;
         
         if (!authenticatedUser || (!authenticatedUser.id && !authenticatedUser._id)) {

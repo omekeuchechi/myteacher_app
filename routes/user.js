@@ -92,7 +92,11 @@ router.post('/create', async (req, res) => {
           </div>
         `;
 
-        await sendEmail(email, 'Verify Your Email', html);
+        await sendEmail({
+            to: email,
+            subject: 'Verify Your Email',
+            html: html
+        });
 
         const user = new User({ name, email, password: hashedPassword, userCourse, verificationToken: token, isVerified: false });
         const response = await user.save();
@@ -178,7 +182,11 @@ router.get('/verify-email', async (req, res) => {
           </div>
         `;
 
-        await sendEmail(user.email, 'Your Email is Verified', htmlContent);
+        await sendEmail({
+            to: user.email,
+            subject: 'Your Email is Verified',
+            html: htmlContent
+        });
 
         res.json({ success: true, message: 'Email verified successfully' });
 
@@ -235,7 +243,11 @@ router.post('/resend-verification', async (req, res) => {
           </div>
         `;
 
-        await sendEmail(email, 'Email Verification', html);
+        await sendEmail({
+            to: email,
+            subject: 'Email Verification',
+            html: html
+        });
 
         return res.json({ success: true, message: 'Verification email sent' });
     } catch (err) {
@@ -620,11 +632,11 @@ router.post('/forgot-password', async (req, res) => {
         `;
 
         // Send email
-        await sendEmail(
-            user.email,
-            'Password Reset Request',
-            emailContent
-        );
+        await sendEmail({
+            to: user.email,
+            subject: 'Password Reset Request',
+            html: emailContent
+        });
 
         return res.json({ 
             success: true, 
@@ -729,11 +741,11 @@ router.post('/reset-password', async (req, res) => {
             </div>
         `;
 
-        await sendEmail(
-            user.email,
-            'Your Password Has Been Updated',
-            emailContent
-        );
+        await sendEmail({
+            to: user.email,
+            subject: 'Your Password Has Been Updated',
+            html: emailContent
+        });
 
         return res.json({ 
             success: true, 

@@ -239,11 +239,16 @@ class CertificateService {
 
                 // Send email
                 try {
-                    await sendEmail(user.email, emailSubject, emailHtml, [{
-                        filename: certFileName,
-                        content: pdfBytes,
-                        contentType: 'application/pdf'
-                    }]);
+                    await sendEmail({
+                        to: user.email,
+                        subject: emailSubject,
+                        html: emailHtml,
+                        attachments: [{
+                            filename: certFileName,
+                            content: pdfBytes,
+                            contentType: 'application/pdf'
+                        }]
+                    });
                     console.log(`✅ Certificate email sent to ${user.email}`);
                 } catch (emailError) {
                     console.error(`❌ Failed to send email to ${user.email}:`, emailError.message);

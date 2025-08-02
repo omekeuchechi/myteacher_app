@@ -62,9 +62,11 @@ const assignmentRoutes = require('./routes/assignment');
 const certificateRoutes = require('./routes/certificate');
 const videoRouter = require('./routes/video');
 const uploaderRouter = require('./routes/uploader');
+const upcomingLectureBatchRouter = require('./routes/upcomingLectureBatch');
 
 const { scheduleLectureUpdates } = require('./lib/lectureScheduler');
 const { scheduleAIGrading } = require('./lib/cronJob');
+const { scheduleLectureReminders } = require('./lib/lectureReminder');
 
 // Middleware
 app.use(bodyParser.json());
@@ -87,10 +89,12 @@ app.use(`/assignments`, assignmentRoutes);
 app.use(`/certificates`, certificateRoutes);
 app.use(`/video`, videoRouter);
 app.use(`/post_files`, uploaderRouter);
+app.use(`/upcomingLectureBatch`, upcomingLectureBatchRouter);
 
 // Initialize schedulers
 scheduleLectureUpdates();
 scheduleAIGrading();
+scheduleLectureReminders();
 
 // MongoDB connection
 const mongoOptions = {

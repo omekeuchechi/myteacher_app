@@ -64,7 +64,11 @@ router.post('/create', async (req, res) => {
         `;
         
         try {
-            await sendEmail(email, 'Thank You for Contacting Us', emailHtml);
+            await sendEmail({
+                to: email,
+                subject: 'Thank You for Contacting Us',
+                html: emailHtml
+            });
         } catch (emailError) {
             console.error('Failed to send thank you email:', emailError);
         }

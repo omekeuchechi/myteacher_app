@@ -143,14 +143,22 @@ router.post('/lectures/:lectureId/assignments', authJs, async (req, res) => {
         // Send emails conditionally
         const emailPromises = [];
         adminEmail.forEach(email => {
-            if (email && email.trim()) {
-                emailPromises.push(sendEmail(email.trim(), `New Assignment Created: ${assignmentName}`, adminEmailContent));
+            if (email && email.trim()) {    
+                emailPromises.push(sendEmail({
+                    to: email.trim(), 
+                    subject: `New Assignment Created: ${assignmentName}`, 
+                    html: adminEmailContent
+                }));
             }
         });
 
         studentEmails.forEach(email => {
             if (email && email.trim()) {
-                emailPromises.push(sendEmail(email.trim(), `New Assignment: ${assignmentName}`, studentEmailContent));
+                emailPromises.push(sendEmail({
+                    to: email.trim(), 
+                    subject: `New Assignment: ${assignmentName}`, 
+                    html: studentEmailContent
+                }));
             }
         });
 

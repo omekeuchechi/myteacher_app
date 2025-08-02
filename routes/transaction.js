@@ -136,7 +136,7 @@ router.post('/pay/paystack', authJs, async (req, res) => {
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+          Authorization: `Bearer ${process.env.PAYSTACK_MODE === 'DEVELOPMENT' ? process.env.PAYSTACK_TESTING_SECRET_KEY : process.env.PAYSTACK_SECRET_KEY}`
         }
       }
     );
@@ -174,7 +174,7 @@ router.all('/paystack/callback', async (req, res) => {
       `https://api.paystack.co/transaction/verify/${reference}`,
       {
         headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+          Authorization: `Bearer ${process.env.PAYSTACK_MODE === 'DEVELOPMENT' ? process.env.PAYSTACK_TESTING_SECRET_KEY : process.env.PAYSTACK_SECRET_KEY}`
         }
       }
     );
@@ -253,16 +253,16 @@ router.all('/paystack/callback', async (req, res) => {
           
           <p style="text-align: center; margin-top: 30px; color: #7f8c8d;">
             Thank you for choosing MyTeacher!<br>
-            <a href="https://myteacher.com" style="color: #3498db; text-decoration: none;">Visit our website</a>
+            <a href="https://myteacher.institute" style="color: #3498db; text-decoration: none;">Visit our website</a>
           </p>
         </div>
       `;
 
-      await sendEmail(
-        paymentData.customer.email || req.user?.email || req.body.email,
-        `Enrollment Confirmation for ${course.course}`,
-        htmlContent
-      );
+      await sendEmail({
+        to: paymentData.customer.email || req.user?.email || req.body.email,
+        subject: `Enrollment Confirmation for ${course.course} at 🚀 MyTeacher Institute`,
+        html: htmlContent
+      });
     } catch (emailError) {
       console.error('Failed to send enrollment email:', emailError);
     }

@@ -94,20 +94,20 @@ router.post('/create-lecture-batch', authJs, isSuperAdmin, async (req, res) => {
 
     // Send email to each assigned admin
     for (const admin of admins) {
-      await sendEmail(
-        admin.email,
-        'You have been assigned to a new lecture batch',
-        `<p>Hello ${admin.name},<br>You have been assigned as an admin to the lecture batch: <b>${course.course}</b> starting at ${new Date(startTime).toLocaleString()}.</p>`
-      );
+      await sendEmail({
+        to: admin.email,
+        subject: 'You have been assigned to a new lecture batch',
+        html: `<p>Hello ${admin.name},<br>You have been assigned as an admin to the lecture batch: <b>${course.course}</b> starting at ${new Date(startTime).toLocaleString()}.</p>`
+      });
     }
 
     // Send email to each student
     const students = await User.find({ _id: { $in: studentIds } });
     for (const student of students) {
-      await sendEmail(
-        student.email,
-        'You have been added to a lecture batch',
-        `
+      await sendEmail({
+        to: student.email,
+        subject: 'You have been added to a lecture batch',
+        html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Lecture Enrollment</h2>
           
@@ -129,7 +129,7 @@ router.post('/create-lecture-batch', authJs, isSuperAdmin, async (req, res) => {
           </p>
         </div>
         `
-      );
+      });
     }
 
     res.status(201).json({ message: "Lecture batch created", lecture: savedLecture, studentsAdded: students.length });
@@ -320,10 +320,10 @@ setInterval(async () => {
         // Send email to each new student
         const students = await User.find({ _id: { $in: newStudentIds } });
         for (const student of students) {
-          await sendEmail(
-            student.email,
-            'You have been added to a lecture batch',
-            `
+          await sendEmail({
+            to: student.email,
+            subject: 'You have been added to a lecture batch',
+            html: `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
               <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Lecture Enrollment</h2>
               
@@ -345,7 +345,7 @@ setInterval(async () => {
               </p>
             </div>
             `
-          );
+          });
         }
       }
     }
