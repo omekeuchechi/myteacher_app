@@ -117,7 +117,7 @@ router.delete('/:id', authJs, async (req, res) => {
 
     // Delete the folder from Cloudinary
     if (batch.courseImage) {
-        const folderPath = `UpcomingLectureBatch/${batch.courseId.replace(/\s+/g, '_')}`;
+        const folderPath = `UpcomingLectureBatch/${batch.courseId.toString().replace(/\s+/g, '_')}`;
         // This deletes all resources in the folder, then the folder itself.
         await cloudinary.api.delete_resources_by_prefix(folderPath);
         await cloudinary.api.delete_folder(folderPath);
@@ -173,7 +173,7 @@ schedule.scheduleJob('0 0 * * *', async () => {
     for (const batch of expiredBatches) {
       // Delete from Cloudinary
       if (batch.courseImage) {
-        const folderPath = `UpcomingLectureBatch/${batch.courseId.replace(/\s+/g, '_')}`;
+        const folderPath = `UpcomingLectureBatch/${batch.courseId.toString().replace(/\s+/g, '_')}`;
         await cloudinary.api.delete_resources_by_prefix(folderPath);
         await cloudinary.api.delete_folder(folderPath);
       }
