@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const authJs = require('../middlewares/auth');
 const Course = require('../models/course');
 const Enrollment = require('../models/enrollment');
@@ -41,17 +42,77 @@ router.get('/userSpecificLecture', authJs, async (req, res) => {
       return res.status(401).json({ message: "Invalid token: user id missing" });
     }
 
-    // Find non-expired lectures where the user is in studentsEnrolled array
     const currentDate = new Date();
-    const lectures = await Lecture.find({ 
-      studentsEnrolled: userId,
-      expiringDate: { $gt: currentDate } // Only include lectures that haven't expired
-    }).populate('lecturesListed studentsEnrolled');
+    const twoHoursAgo = new Date(currentDate.getTime() - (2 * 60 * 60 * 1000));
+    const oneWeekFromNow = new Date(currentDate.getTime() + (7 * 24 * 60 * 60 * 1000));
+    const minDurationHours = 2; // Minimum 2 hours duration
+    
+    console.log(`Fetching lectures for user ${userId} at ${currentDate}`);
+    console.log(`Looking for lectures between: ${twoHoursAgo} and ${oneWeekFromNow}`);
 
+    // Find lectures where:
+    // 1. User is enrolled
+    // 2. Lecture hasn't expired (expiringDate > now)
+    // 3. Lecture starts within the next week
+    // 4. Lecture has at least 2 hours duration
+    const lectures = await Lecture.aggregate([
+      {
+        $match: {
+          studentsEnrolled: new mongoose.Types.ObjectId(userId),
+          expiringDate: { $gt: currentDate },
+          startTime: { 
+            $gt: twoHoursAgo,
+            $lt: oneWeekFromNow // Don't show lectures starting more than a week from now
+          },
+          $expr: {
+            // Ensure lecture duration is at least 2 hours
+            $gte: [
+              { $dateDiff: { startDate: "$startTime", endDate: "$expiringDate", unit: "hour" } },
+              minDurationHours
+            ]
+          }
+        }
+      },
+      {
+        $sort: { startTime: 1 }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'lecturesListed',
+          foreignField: '_id',
+          as: 'lecturesListed'
+        }
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'studentsEnrolled',
+          foreignField: '_id',
+          as: 'studentsEnrolled'
+        }
+      }
+    ]);
+
+    // Add debug logging for each lecture
+    console.log(`Found ${lectures.length} active lectures:`);
+    lectures.forEach(lecture => {
+      const durationHours = (new Date(lecture.expiringDate) - new Date(lecture.startTime)) / (1000 * 60 * 60);
+      console.log(`- ${lecture.title} (ID: ${lecture._id})`);
+      console.log(`  Start: ${lecture.startTime}, Expires: ${lecture.expiringDate}`);
+      console.log(`  Duration: ${durationHours.toFixed(1)} hours`);
+      console.log(`  Current time: ${currentDate}`);
+      console.log(`  Is expired: ${lecture.expiringDate <= currentDate ? 'YES' : 'NO'}`);
+      console.log(`  Is upcoming: ${lecture.startTime > currentDate ? 'YES' : 'NO'}`);
+    });
+    
     res.json({ lectures });
-    console.log(`User ${userId} fetched their active lectures`);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching user-specific lectures", error: error.message });
+    console.error('Error in userSpecificLecture:', error);
+    res.status(500).json({ 
+      message: "Error fetching user-specific lectures", 
+      error: error.message 
+    });
   }
 });
 
