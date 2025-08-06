@@ -48,7 +48,7 @@ async function uploadBufferToCloudinary(buffer, filename, mimetype) {
 // Register with Email Verification
 router.post('/create', async (req, res) => {
     try {
-        const { name, email, password, userCourse } = req.body;
+        const { name, email, password } = req.body;
 
         if (!name || !email || !password) {
             return res.status(400).json({ message: "Name, email, and password are required" });
@@ -98,7 +98,7 @@ router.post('/create', async (req, res) => {
             html: html
         });
 
-        const user = new User({ name, email, password: hashedPassword, userCourse, verificationToken: token, isVerified: false });
+        const user = new User({ name, email, password: hashedPassword, verificationToken: token, isVerified: false });
         const response = await user.save();
         await pushDashboardStats();
 
@@ -106,7 +106,6 @@ router.post('/create', async (req, res) => {
             _id: response._id,
             name: response.name,
             email: response.email,
-            userCourse: response.userCourse,
         };
 
         // Pusher event: user created
