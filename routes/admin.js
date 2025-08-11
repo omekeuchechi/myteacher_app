@@ -399,5 +399,52 @@ router.get('/super-admins', authJs, async (req, res) => {
   }
 });
 
+// api for assigning onsite user to a course
+router.patch('/assign-onsite-user-to-course/:userId', authJs, async (req, res) => {
+  try {
+    const { userCourse } = req.body;
+    
+    // Validate input
+    if (!userCourse) {
+      return res.status(400).json({
+        success: false,
+        message: "userCourse is required in the request body"
+      });
+    }
+
+    // Use findByIdAndUpdate for atomic update
+    const updatedUser = await User.findByIdAndUpdate(
+      req.params.userId,
+      { 
+        $set: { 
+          userCourse: userCourse,
+          onSite: true  // Ensure onSite is set to true for onsite users
+        } 
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ 
+        success: false,
+        message: "User not found" 
+      });
+    }
+
+    return res.status(200).json({ 
+      success: true,
+      message: "User assigned to course successfully", 
+      data: updatedUser
+    });
+  } catch (error) {
+    console.error('Error assigning user to course:', error);
+    return res.status(500).json({ 
+      success: false,
+      message: "Internal server error", 
+      error: error.message 
+    });
+  }
+});
+
 // Export the pushDashboardStats function for use in other routes (e.g., user.js)
 module.exports = { router, pushDashboardStats };
