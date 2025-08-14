@@ -4,6 +4,7 @@ const UpcomingLectureBatch = require('../models/upcomingLectureBatch');
 const authJs = require('../middlewares/auth');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
+const mongoose = require('mongoose'); // mongoose is required for ObjectId validation
 
 // Configure Cloudinary
 cloudinary.config({
@@ -46,25 +47,42 @@ router.post('/create', authJs, upload.single('courseImage'), async (req, res) =>
       courseImageUrl = result.secure_url;
     }
 
-    const newBatch = new UpcomingLectureBatch({
+    // Prepare batch data
+    const batchData = {
       courseId,
       courseName,
       courseDescription,
       courseIntructor,
       startTime,
       platform,
-      courseImage: courseImageUrl,
-      linkedLecture: linkedLecture || null
-    });
+      courseImage: courseImageUrl
+    };
 
+    // Only add linkedLecture if it's a valid ObjectId or null/undefined
+    if (linkedLecture && linkedLecture !== 'null' && mongoose.Types.ObjectId.isValid(linkedLecture)) {
+      batchData.linkedLecture = linkedLecture;
+    } else if (linkedLecture === 'null' || linkedLecture === null || linkedLecture === undefined) {
+      batchData.linkedLecture = null;
+    } else {
+      return res.status(400).json({ 
+        message: 'Invalid linkedLecture ID',
+        details: 'The provided linkedLecture ID is not a valid MongoDB ObjectId'
+      });
+    }
+
+    const newBatch = new UpcomingLectureBatch(batchData);
     await newBatch.save();
+    
     res.status(201).json(newBatch);
   } catch (error) {
     console.error('Error creating upcoming lecture batch:', error);
-    res.status(500).json({ message: 'Failed to create upcoming lecture batch', error: error.message });
+    res.status(500).json({ 
+      message: 'Failed to create upcoming lecture batch', 
+      error: error.message 
+    });
   }
 });
- 
+
 // GET all upcoming lecture batches
 router.get('/', async (req, res) => {
   try {

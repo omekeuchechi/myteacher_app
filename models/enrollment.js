@@ -5,6 +5,7 @@ const enrollmentSchema = new mongoose.Schema({
   courseId: String,
   enrolledAt: { type: Date, default: Date.now },
   expiryDate: Date,
+  linkedLecture: { type: mongoose.Schema.Types.ObjectId, ref: 'Lecture' },
 });
 
 const Enrollment = mongoose.model('Enrollment', enrollmentSchema);

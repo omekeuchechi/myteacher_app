@@ -6,6 +6,7 @@ const Course = require('../models/course');
 const Transaction = require('../models/transaction');
 const Enrollment = require('../models/enrollment');
 const Lecture = require('../models/lecture'); // Import Lecture model
+const UpcomingLectureBatch = require('../models/upcomingLectureBatch'); // Import UpcomingLectureBatch model
 const Pusher = require('pusher');
 const sendEmail = require('../lib/sendEmail');
 const User = require('../models/user'); // Import User model
@@ -103,7 +104,13 @@ const pusher = new Pusher({
 // PAYSTACK PAYMENT INITIALIZATION
 router.post('/pay/paystack', authJs, async (req, res) => {
   try {
-    const { userId, courseId } = req.body;
+    const { userId, courseId, courseName, linkedLecture } = req.body;
+
+    if (!courseId && !courseName) {
+      return res.status(400).json({ 
+        message: 'Either courseId or courseName is required' 
+      });
+    }
 
     // Check for existing enrollment within last 5 days
     const fiveDaysAgo = new Date();
@@ -111,7 +118,7 @@ router.post('/pay/paystack', authJs, async (req, res) => {
     
     const existingEnrollment = await Enrollment.findOne({
       userId,
-      courseId,
+      courseId: courseId || courseName, // Use either ID or name for the check
       enrolledAt: { $gte: fiveDaysAgo }
     });
 
@@ -122,8 +129,34 @@ router.post('/pay/paystack', authJs, async (req, res) => {
       });
     }
 
-    const course = await Course.findById(courseId);
-    if (!course) return res.status(404).json({ message: 'Course not found' });
+    // Find course by ID or name
+    let course;
+    if (courseId) {
+      course = await Course.findById(courseId);
+    } else {
+      course = await Course.findOne({ course: courseName });
+    }
+
+    if (!course) {
+      return res.status(404).json({ 
+        message: 'Course not found',
+        details: courseId ? `No course found with ID: ${courseId}` : `No course found with name: ${courseName}`
+      });
+    }
+
+    // If linkedLecture is provided, verify it exists and belongs to the same course
+    if (linkedLecture) {
+      const lecture = await Lecture.findOne({ 
+        _id: linkedLecture,
+        courseId: course._id 
+      });
+      
+      if (!lecture) {
+        return res.status(400).json({ 
+          message: 'Invalid lecture reference or lecture does not belong to this course' 
+        });
+      }
+    }
 
     const amount = course.price;
     const currency = 'NGN'; // Or USD depending on your setup
@@ -134,7 +167,11 @@ router.post('/pay/paystack', authJs, async (req, res) => {
         email: req.user?.email || req.body.email || 'user@example.com',
         amount: amount * 100, // In kobo
         currency,
-        metadata: { userId, courseId }
+        metadata: { 
+          userId, 
+          courseId: course._id, // Use the resolved course ID
+          linkedLecture: linkedLecture || null // Include linkedLecture in metadata
+        }
       },
       {
         headers: {
@@ -151,7 +188,7 @@ router.post('/pay/paystack', authJs, async (req, res) => {
 
     await Transaction.create({
       userId,
-      courseId,
+      courseId: course._id,
       amount,
       currency,
       paymentReference: reference,
@@ -226,22 +263,66 @@ router.all('/paystack/callback', async (req, res) => {
       userId, 
       courseId, 
       enrolledAt, 
-      expiryDate 
+      expiryDate,
+      linkedLecture: paymentData.metadata.linkedLecture // Store the linked lecture reference
     });
 
     // Add user to all active lecture batches for this course
     const currentDate = new Date();
-    const updatedLectures = await Lecture.findAndUpdateMany(
-      { 
-        courseId,
-        startTime: { $gt: currentDate }, // Future lectures
-        expiringDate: { $gt: currentDate } // Not expired
-      },
-      { 
-        $addToSet: { studentsEnrolled: userId } // Add user if not already enrolled
-      },
-      { new: true } // Return the updated documents
-    );
+    
+    // If we have a specific linkedLecture, only update that one
+    if (paymentData.metadata.linkedLecture) {
+      // 1. Update the specific Lecture document
+      const updatedLecture = await Lecture.findByIdAndUpdate(
+        paymentData.metadata.linkedLecture,
+        { 
+          $addToSet: { studentsEnrolled: userId } // Add user if not already enrolled
+        },
+        { new: true }
+      );
+
+      // 2. Update the corresponding UpcomingLectureBatch if it exists
+      await UpcomingLectureBatch.updateOne(
+        { 
+          linkedLecture: paymentData.metadata.linkedLecture,
+          startTime: { $gt: currentDate } // Only future batches
+        },
+        {
+          $addToSet: { booked: userId } // Add user to booked list if not already present
+        }
+      );
+
+      // Prepare lectures list for email
+      updatedLectures = updatedLecture ? [updatedLecture] : [];
+    } else {
+      // Original logic for when there's no specific linkedLecture
+      // 1. Update Lectures collection for future/active lectures
+      updatedLectures = await Lecture.findAndUpdateMany(
+        { 
+          courseId,
+          startTime: { $gt: currentDate }, // Future lectures
+          expiringDate: { $gt: currentDate } // Not expired
+        },
+        { 
+          $addToSet: { studentsEnrolled: userId } // Add user if not already enrolled
+        },
+        { new: true } // Return the updated documents
+      );
+
+      // 2. Update corresponding UpcomingLectureBatch documents
+      if (updatedLectures.length > 0) {
+        const lectureIds = updatedLectures.map(lecture => lecture._id);
+        await UpcomingLectureBatch.updateMany(
+          { 
+            linkedLecture: { $in: lectureIds },
+            startTime: { $gt: currentDate } // Only future batches
+          },
+          {
+            $addToSet: { booked: userId } // Add user to booked list if not already present
+          }
+        );
+      }
+    }
 
     // Get user details for email
     const user = await User.findById(userId);
