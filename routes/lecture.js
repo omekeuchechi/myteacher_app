@@ -194,75 +194,53 @@ router.post('/create-lecture-batch', authJs, isSuperAdmin, async (req, res) => {
       verificationToken,
       expiringDate,
       lecturesListed: adminIds,
-      studentsEnrolled: studentIds
+      studentsEnrolled: studentIds,
+      createdBy: req.decoded.userId  // Track who created the batch
     });
 
     const savedLecture = await lecture.save();
 
-    // Send email to each assigned admin
-    for (const admin of admins) {
+    // Get the admin who created this batch
+    const creatingAdmin = await User.findById(req.decoded.userId);
+    
+    if (creatingAdmin) {
+      // Send email only to the admin who created the batch
       await sendEmail({
-        to: admin.email,
-        subject: 'You have been assigned to a new lecture batch',
+        to: creatingAdmin.email,
+        subject: 'Lecture Batch Created Successfully',
         html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">New Lecture Batch Assignment</h2>
+          <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Lecture Batch Created</h2>
+          
+          <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+            <p style="font-size: 16px;">Hello ${creatingAdmin.name},</p>
+            <p>You have successfully created a new lecture batch:</p>
+            <h3 style="color: #3498db; margin: 15px 0;">${course.course}</h3>
             
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
-                <p style="font-size: 16px;">Hello ${admin.name},</p>
-                <p>You have been assigned as an admin to the lecture batch:</p>
-                
-                <h3 style="color: #3498db; margin: 15px 0;">${course.course}</h3>
-                
-                <div style="margin: 20px 0;">
-                    <p><strong>Start Time:</strong> ${new Date(startTime).toLocaleString()}</p>
-                    <p><strong>Platform:</strong> ${platform}</p>
-                    ${finalZoomLink ? `<p><strong>Join Link:</strong> <a href="${finalZoomLink}">Click here to join</a></p>` : ''}
-                </div>
+            <div style="margin: 20px 0;">
+              <p><strong>Start Time:</strong> ${new Date(startTime).toLocaleString()}</p>
+              <p><strong>Platform:</strong> ${platform}</p>
+              <p><strong>Total Students Enrolled:</strong> ${studentIds.length}</p>
+              <p><strong>Assigned Admins:</strong> ${admins.map(a => a.name).join(', ')}</p>
+              ${finalZoomLink ? `<p><strong>Join Link:</strong> <a href="${finalZoomLink}">Click here to join</a></p>` : ''}
             </div>
-            
-            <p style="text-align: center; color: #7f8c8d;">
-                Please prepare your materials and be ready for the session.<br>
-                <a href="${process.env.CLIENT_URL}" style="color: #3498db; text-decoration: none;">Access MyTeacher Dashboard</a>
-            </p>
+          </div>
+          
+          <p style="text-align: center; color: #7f8c8d;">
+            You can manage this batch from your admin dashboard.<br>
+            <a href="${process.env.CLIENT_URL}/admin/lectures" style="color: #3498db; text-decoration: none;">Go to Admin Dashboard</a>
+          </p>
         </div>
         `
       });
     }
 
-    // Send email to each student
-    const students = await User.find({ _id: { $in: studentIds } });
-    for (const student of students) {
-      await sendEmail({
-        to: student.email,
-        subject: 'You have been added to a new lecture batch',
-        html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Lecture Enrollment Notification</h2>
-            
-            <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
-                <p style="font-size: 16px;">Hello ${student.name},</p>
-                <p>You have been enrolled in a new lecture batch:</p>
-                
-                <h3 style="color: #3498db; margin: 15px 0;">${course.course}</h3>
-                
-                <div style="margin: 20px 0;">
-                    <p><strong>Start Time:</strong> ${new Date(startTime).toLocaleString()}</p>
-                    <p><strong>Platform:</strong> ${platform}</p>
-                    ${finalZoomLink ? `<p><strong>Join Link:</strong> <a href="${finalZoomLink}">Click here to join</a></p>` : ''}
-                </div>
-            </div>
-            
-            <p style="text-align: center; color: #7f8c8d;">
-                We look forward to seeing you in class!<br>
-                <a href="${process.env.CLIENT_URL}" style="color: #3498db; text-decoration: none;">Visit MyTeacher</a>
-            </p>
-        </div>
-        `
-      });
-    }
-
-    res.status(201).json({ message: "Lecture batch created", lecture: savedLecture, studentsAdded: students.length });
+    res.status(201).json({ 
+      message: "Lecture batch created successfully", 
+      lecture: savedLecture,
+      studentsEnrolled: studentIds.length,
+      adminsNotified: creatingAdmin ? 1 : 0
+    });
   } catch (error) {
     console.error("Error creating lecture batch:", error);
     res.status(500).json({ message: "Error creating lecture batch", error: error.message });
@@ -381,6 +359,42 @@ router.get('/user/:userId', authJs, async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: 'Error fetching user lectures',
+      error: error.message 
+    });
+  }
+});
+
+/**
+ * @route   DELETE /:id
+ * @desc    Delete a lecture by ID
+ * @access  Protected (requires authJs middleware)
+ */
+router.delete('/:id', authJs, async (req, res) => {
+  try {
+    const lecture = await Lecture.findByIdAndDelete(req.params.id);
+    
+    if (!lecture) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'Lecture not found' 
+      });
+    }
+    
+    // If there's a linked batch, update or delete it as needed
+    if (lecture.linkedBatch) {
+      await UpcomingLectureBatch.findOneAndDelete({ linkedLecture: lecture._id });
+    }
+
+    res.json({ 
+      success: true,
+      message: 'Lecture deleted successfully' 
+    });
+    
+  } catch (error) {
+    console.error('Error deleting lecture:', error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Error deleting lecture',
       error: error.message 
     });
   }

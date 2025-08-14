@@ -63,6 +63,7 @@ const certificateRoutes = require('./routes/certificate');
 const videoRouter = require('./routes/video');
 const uploaderRouter = require('./routes/uploader');
 const upcomingLectureBatchRouter = require('./routes/upcomingLectureBatch');
+const onsiteAssetRoutes = require('./routes/onsite-asset');
 
 const { scheduleLectureUpdates } = require('./lib/lectureScheduler');
 const { scheduleAIGrading } = require('./lib/cronJob');
@@ -90,6 +91,7 @@ app.use(`/certificates`, certificateRoutes);
 app.use(`/video`, videoRouter);
 app.use(`/post_files`, uploaderRouter);
 app.use(`/upcomingLectureBatch`, upcomingLectureBatchRouter);
+app.use(`/onsite-assets`, onsiteAssetRoutes);
 
 // Initialize schedulers
 scheduleLectureUpdates();

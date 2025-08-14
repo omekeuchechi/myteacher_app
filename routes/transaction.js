@@ -5,8 +5,10 @@ const authJs = require('../middlewares/auth');
 const Course = require('../models/course');
 const Transaction = require('../models/transaction');
 const Enrollment = require('../models/enrollment');
+const Lecture = require('../models/lecture'); // Import Lecture model
 const Pusher = require('pusher');
 const sendEmail = require('../lib/sendEmail');
+const User = require('../models/user'); // Import User model
 
 // Initialize Pusher
 const pusher = new Pusher({
@@ -219,18 +221,57 @@ router.all('/paystack/callback', async (req, res) => {
     const expiryDate = new Date(enrolledAt);
     expiryDate.setDate(enrolledAt.getDate() + course.durationWeeks * 7);
 
-    await Enrollment.create({ userId, courseId, enrolledAt, expiryDate });
+    // Create enrollment
+    const enrollment = await Enrollment.create({ 
+      userId, 
+      courseId, 
+      enrolledAt, 
+      expiryDate 
+    });
+
+    // Add user to all active lecture batches for this course
+    const currentDate = new Date();
+    const updatedLectures = await Lecture.findAndUpdateMany(
+      { 
+        courseId,
+        startTime: { $gt: currentDate }, // Future lectures
+        expiringDate: { $gt: currentDate } // Not expired
+      },
+      { 
+        $addToSet: { studentsEnrolled: userId } // Add user if not already enrolled
+      },
+      { new: true } // Return the updated documents
+    );
+
+    // Get user details for email
+    const user = await User.findById(userId);
 
     // Send enrollment confirmation email
     try {
+      const lecturesList = updatedLectures.length > 0 ? 
+        updatedLectures.map(lecture => `
+          <div style="margin: 15px 0; padding: 10px; background: #f5f5f5; border-radius: 5px;">
+            <h4 style="margin: 0 0 10px 0; color: #2c3e50;">${lecture.title}</h4>
+            <p style="margin: 5px 0;"><strong>Date & Time:</strong> ${new Date(lecture.startTime).toLocaleString()}</p>
+            <p style="margin: 5px 0;"><strong>Platform:</strong> ${lecture.platform}</p>
+            ${lecture.zoomLink ? `<p style="margin: 5px 0;"><a href="${lecture.zoomLink}" style="color: #3498db; text-decoration: none;">Join Class</a></p>` : ''}
+          </div>
+        `).join('') : 
+        '<p>No upcoming classes scheduled yet. Please check back later.</p>';
+
       const htmlContent = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Enrollment Confirmation</h2>
           
           <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
-            <p style="font-size: 16px;">You have successfully enrolled in:</p>
-            <h3 style="color: #3498db; margin-top: 5px;">${course.course}</h3>
+            <p style="font-size: 16px;">Hello ${user?.name || 'there'},</p>
+            <p>You have successfully enrolled in:</p>
+            <h3 style="color: #3498db; margin: 5px 0 15px 0;">${course.course}</h3>
+            <p>${course.description || ''}</p>
           </div>
+          
+          <h3 style="color: #2c3e50; margin: 20px 0 10px 0;">Your Upcoming Classes:</h3>
+          ${lecturesList}
           
           <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
             <tr>
@@ -253,14 +294,14 @@ router.all('/paystack/callback', async (req, res) => {
           
           <p style="text-align: center; margin-top: 30px; color: #7f8c8d;">
             Thank you for choosing MyTeacher!<br>
-            <a href="https://myteacher.institute" style="color: #3498db; text-decoration: none;">Visit our website</a>
+            <a href="${process.env.CLIENT_URL || 'https://myteacher.institute'}/dashboard" style="color: #3498db; text-decoration: none;">Access Your Dashboard</a>
           </p>
         </div>
       `;
 
       await sendEmail({
-        to: paymentData.customer.email || req.user?.email || req.body.email,
-        subject: `Enrollment Confirmation for ${course.course} at 🚀 MyTeacher Institute`,
+        to: paymentData.customer?.email || user?.email || req.user?.email || req.body.email,
+        subject: `🎓 Enrollment Confirmation for ${course.course}`,
         html: htmlContent
       });
     } catch (emailError) {
@@ -272,7 +313,8 @@ router.all('/paystack/callback', async (req, res) => {
       message: 'Payment successful!',
       courseId,
       courseName: course.course,
-      amount: paymentData.amount / 100
+      amount: paymentData.amount / 100,
+      lectures: updatedLectures
     });
 
     // Notify admin dashboard of new transaction
@@ -280,10 +322,45 @@ router.all('/paystack/callback', async (req, res) => {
       userId,
       courseId,
       amount: paymentData.amount / 100,
-      timestamp: new Date()
+      timestamp: new Date(),
+      enrollmentId: enrollment._id,
+      lectureCount: updatedLectures.length
     });
 
-    res.send('Payment successful! You are now enrolled.');
+    res.send(`
+      <html>
+        <head>
+          <title>Payment Successful</title>
+          <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+            .success { color: #27ae60; font-size: 24px; margin-bottom: 20px; }
+            .button { 
+              display: inline-block; 
+              background: #3498db; 
+              color: white; 
+              padding: 10px 20px; 
+              text-decoration: none; 
+              border-radius: 5px; 
+              margin-top: 20px; 
+            }
+          </style>
+        </head>
+        <body>
+          <div class="success">✅ Payment Successful!</div>
+          <p>You have been enrolled in ${course.course}.</p>
+          ${updatedLectures.length > 0 ? 
+            `<p>You've been added to ${updatedLectures.length} upcoming class${updatedLectures.length > 1 ? 'es' : ''}.</p>` : 
+            ''}
+          <p>Check your email for class details and schedule.</p>
+          <a href="${process.env.CLIENT_URL || 'https://myteacher.institute'}/dashboard" class="button">Go to Dashboard</a>
+          <script>
+            setTimeout(() => {
+              window.location.href = '${process.env.CLIENT_URL || 'https://myteacher.institute'}/dashboard';
+            }, 5000);
+          </script>
+        </body>
+      </html>
+    `);
   } catch (error) {
     console.error('Paystack callback error:', error.response?.data || error.message);
     res.status(500).send('Verification failed.');

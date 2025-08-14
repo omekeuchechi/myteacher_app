@@ -37,7 +37,7 @@ router.post('/create', authJs, upload.single('courseImage'), async (req, res) =>
   }
 
   try {
-    const { courseId, courseName, courseDescription, courseIntructor, startTime, platform } = req.body;
+    const { courseId, courseName, courseDescription, courseIntructor, startTime, platform, linkedLecture } = req.body;
     let courseImageUrl = '';
 
     if (req.file) {
@@ -53,7 +53,8 @@ router.post('/create', authJs, upload.single('courseImage'), async (req, res) =>
       courseIntructor,
       startTime,
       platform,
-      courseImage: courseImageUrl
+      courseImage: courseImageUrl,
+      linkedLecture: linkedLecture || null
     });
 
     await newBatch.save();
@@ -63,7 +64,7 @@ router.post('/create', authJs, upload.single('courseImage'), async (req, res) =>
     res.status(500).json({ message: 'Failed to create upcoming lecture batch', error: error.message });
   }
 });
-
+ 
 // GET all upcoming lecture batches
 router.get('/', async (req, res) => {
   try {
@@ -115,16 +116,28 @@ router.delete('/:id', authJs, async (req, res) => {
       return res.status(404).json({ message: 'Batch not found' });
     }
 
-    // Delete the folder from Cloudinary
+    // Delete from Cloudinary if image exists
     if (batch.courseImage) {
+      try {
         const folderPath = `UpcomingLectureBatch/${batch.courseId.toString().replace(/\s+/g, '_')}`;
-        // This deletes all resources in the folder, then the folder itself.
+        // First delete all resources in the folder
         await cloudinary.api.delete_resources_by_prefix(folderPath);
-        await cloudinary.api.delete_folder(folderPath);
+        // Then try to delete the folder, but don't fail if it doesn't exist
+        try {
+          await cloudinary.api.delete_folder(folderPath);
+        } catch (folderError) {
+          // Ignore folder not found errors
+          if (folderError.http_code !== 404) {
+            console.error('Error deleting Cloudinary folder:', folderError);
+          }
+        }
+      } catch (cloudinaryError) {
+        console.error('Error cleaning up Cloudinary resources:', cloudinaryError);
+        // Continue with deletion even if Cloudinary cleanup fails
+      }
     }
 
     await UpcomingLectureBatch.findByIdAndDelete(req.params.id);
-
     res.json({ message: 'Batch deleted successfully' });
   } catch (error) {
     console.error('Error deleting batch:', error);

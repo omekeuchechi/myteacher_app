@@ -10,6 +10,8 @@ const Enrollment = require('../models/enrollment');
 const Transaction = require('../models/transaction');
 const Message = require('../models/contactMessage');
 const Asset = require('../models/asset');
+const cloudinary = require('cloudinary').v2;
+const OnsiteAsset = require('../models/onsite_asset');
 // const Blog = require('../models/blog');
 
 const pusher = new Pusher({
@@ -445,6 +447,65 @@ router.patch('/assign-onsite-user-to-course/:userId', authJs, async (req, res) =
     });
   }
 });
+
+// api for uploading assets to the cloudinary for onsite user
+router.post('/onsite-upload-asset', authJs, async (req, res) => {
+  try {
+    const { file } = req.body;
+    if (!file) {
+      return res.status(400).json({ 
+        success: false,
+        message: "File is required in the request body"
+      });
+    }
+
+    const result = await cloudinary.v2.uploader.upload(file, {
+      folder: 'onsite-assets',
+      resource_type: 'auto'
+    });
+
+    return res.status(200).json({ 
+      success: true,
+      message: "Asset uploaded successfully", 
+      data: result
+    });
+  } catch (error) {
+    console.error('Error uploading asset:', error);
+    return res.status(500).json({ 
+      success: false,
+      message: "Internal server error", 
+      error: error.message 
+    });
+  }
+});
+
+//api for deleting of the onsite assets in cloudinary
+router.delete('/onsite-delete-asset/:assetId', authJs, async (req, res) => {
+  try {
+    const { assetId } = req.params;
+    if (!assetId) {
+      return res.status(400).json({ 
+        success: false,
+        message: "Asset ID is required in the request parameters"
+      });
+    }
+
+    const result = await cloudinary.v2.uploader.destroy(assetId);
+    return res.status(200).json({ 
+      success: true,
+      message: "Asset deleted successfully", 
+      data: result
+    });
+  } catch (error) {
+    console.error('Error deleting asset:', error);
+    return res.status(500).json({ 
+      success: false,
+      message: "Internal server error", 
+      error: error.message 
+    });
+  }
+});
+
 
 // Export the pushDashboardStats function for use in other routes (e.g., user.js)
 module.exports = { router, pushDashboardStats };

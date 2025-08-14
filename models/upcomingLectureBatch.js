@@ -9,6 +9,7 @@ const upcomingLectureBatchSchema = new mongoose.Schema({
     startTime : {type: Date, required: true},
     platform : {type: String, enum : ['Zoom', 'Jitsi', 'Other'], default: 'Zoom'},
     booked : [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    linkedLecture : { type: mongoose.Schema.Types.ObjectId, ref: 'Lecture' },
     reminderSent: { type: Boolean, default: false },
     nextDayReminderSent: { type: Boolean, default: false }
 }, {timestamps: true})
