@@ -7,7 +7,8 @@ const assetSchema = new mongoose.Schema({
     webViewLink : String,
     webContentLink : String,
     uploadedBy : {type: mongoose.Schema.Types.ObjectId, ref: "User"},
-    lectureId : {type: mongoose.Schema.Types.ObjectId, ref: "Lecture"},
+    courseId : {type: mongoose.Schema.Types.ObjectId, ref: "Course"},
+    courseName : String,
     createdAt : {type: Date, default: Date.now}
 });
 

@@ -5,7 +5,8 @@ const { Readable } = require('stream');
 const authJs = require('../middlewares/auth');
 const OnsiteAsset = require('../models/onsite_asset');
 const Busboy = require('busboy');
-const User = require('../models/user'); // Assuming User model is defined in this file
+const User = require('../models/user');
+const Course = require('../models/course');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -16,127 +17,148 @@ cloudinary.config({
 
 // Upload asset to Cloudinary
 router.post('/upload', authJs, async (req, res) => {
-  const { lectureId } = req.query;
-  if (!lectureId) {
+  const { courseId } = req.query;
+  if (!courseId) {
     return res.status(400).json({ 
       success: false,
-      message: 'lectureId is required as a query parameter' 
+      message: 'courseId is required as a query parameter' 
     });
   }
 
-  const files = [];
-  const busboy = Busboy({ headers: req.headers });
-  let hasFile = false;
-  let errorOccurred = false;
+  try {
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: 'Course not found'
+      });
+    }
 
-  busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
-    hasFile = true;
-    const fileChunks = [];
-    
-    file.on('data', (data) => fileChunks.push(data));
-    
-    file.on('end', () => {
-      let realFilename = filename;
-      if (filename && typeof filename === 'object' && filename.filename) {
-        realFilename = filename.filename;
-      }
+    const files = [];
+    const busboy = Busboy({ headers: req.headers });
+    let hasFile = false;
+    let errorOccurred = false;
+
+    busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
+      hasFile = true;
+      const fileChunks = [];
       
-      files.push({
-        buffer: Buffer.concat(fileChunks),
-        filename: realFilename,
-        mimetype: mimetype || 'application/octet-stream',
-        originalname: realFilename
+      file.on('data', (data) => fileChunks.push(data));
+      
+      file.on('end', () => {
+        let realFilename = filename;
+        if (filename && typeof filename === 'object' && filename.filename) {
+          realFilename = filename.filename;
+        }
+        
+        files.push({
+          buffer: Buffer.concat(fileChunks),
+          filename: realFilename,
+          mimetype: mimetype || 'application/octet-stream',
+          originalname: realFilename
+        });
       });
     });
-  });
 
-  busboy.on('finish', async () => {
-    if (errorOccurred) {
-      return res.status(500).json({ 
-        success: false,
-        message: 'File upload failed.' 
-      });
-    }
+    busboy.on('finish', async () => {
+      if (errorOccurred) {
+        return res.status(500).json({ 
+          success: false,
+          message: 'File upload failed.' 
+        });
+      }
+      
+      if (!hasFile) {
+        return res.status(400).json({ 
+          success: false,
+          message: 'No files uploaded' 
+        });
+      }
+
+      try {
+        const file = files[0];
+        
+        const result = await new Promise((resolve, reject) => {
+          const uploadStream = cloudinary.uploader.upload_stream(
+            { 
+              resource_type: 'auto',
+              folder: `courses/${courseId}`,
+              public_id: file.filename.split('.')[0]
+            },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+
+          const bufferStream = new Readable();
+          bufferStream.push(file.buffer);
+          bufferStream.push(null);
+          bufferStream.pipe(uploadStream);
+        });
+
+        const asset = new OnsiteAsset({
+          name: file.filename,
+          mimeType: file.mimetype,
+          driveFileId: result.public_id,
+          webViewLink: result.secure_url,
+          webContentLink: result.secure_url,
+          uploadedBy: req.decoded.userId,
+          courseId: courseId,
+          courseName: course.name
+        });
+        
+        await asset.save();
+        
+        const savedAsset = await OnsiteAsset.findById(asset._id)
+          .populate('uploadedBy', 'name email')
+          .populate('courseId', 'name');
+        
+        res.json({
+          success: true,
+          message: 'Asset uploaded successfully',
+          data: savedAsset
+        });
+        
+      } catch (error) {
+        console.error('Upload failed:', error);
+        res.status(500).json({ 
+          success: false,
+          message: 'Upload failed', 
+          error: error.message 
+        });
+      }
+    });
+
+    busboy.on('error', (err) => {
+      console.error('Busboy error:', err);
+      errorOccurred = true;
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          success: false,
+          message: 'Upload failed', 
+          error: err.message 
+        });
+      }
+    });
+
+    req.pipe(busboy);
     
-    if (!hasFile) {
-      return res.status(400).json({ 
-        success: false,
-        message: 'No files uploaded' 
-      });
-    }
-
-    try {
-      const file = files[0];
-      
-      // Upload to Cloudinary
-      const result = await new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          { 
-            resource_type: 'auto',
-            folder: `onsite-lectures/${lectureId}`,
-            public_id: file.filename.split('.')[0]
-          },
-          (error, result) => {
-            if (error) reject(error);
-            else resolve(result);
-          }
-        );
-
-        const bufferStream = new Readable();
-        bufferStream.push(file.buffer);
-        bufferStream.push(null);
-        bufferStream.pipe(uploadStream);
-      });
-
-      // Save to database
-      const asset = new OnsiteAsset({
-        name: file.filename,
-        mimeType: file.mimetype,
-        webViewLink: result.secure_url,
-        webContentLink: result.secure_url,
-        uploadedBy: req.decoded.userId,
-        lectureId: lectureId
-      });
-      
-      await asset.save();
-      
-      res.json({
-        success: true,
-        message: 'Asset uploaded successfully',
-        data: asset
-      });
-      
-    } catch (error) {
-      console.error('Upload failed:', error);
-      res.status(500).json({ 
-        success: false,
-        message: 'Upload failed', 
-        error: error.message 
-      });
-    }
-  });
-
-  busboy.on('error', (err) => {
-    console.error('Busboy error:', err);
-    errorOccurred = true;
-    if (!res.headersSent) {
-      res.status(500).json({ 
-        success: false,
-        message: 'Upload failed', 
-        error: err.message 
-      });
-    }
-  });
-
-  req.pipe(busboy);
+  } catch (error) {
+    console.error('Error in upload:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error processing upload',
+      error: error.message
+    });
+  }
 });
 
-// List assets for a specific lecture
-router.get('/list/:lectureId', authJs, async (req, res) => {
+// List assets for a specific course
+router.get('/list/:courseId', authJs, async (req, res) => {
   try {
-    const { lectureId } = req.params;
+    const { courseId } = req.params;
     
-    // Get user details to check course and onSite status
     const user = await User.findById(req.decoded.userId);
     if (!user) {
       return res.status(404).json({
@@ -145,26 +167,17 @@ router.get('/list/:lectureId', authJs, async (req, res) => {
       });
     }
     
-    // Get all assets for the lecture
-    let assets = await OnsiteAsset.find({ lectureId })
-      .populate('uploadedBy', 'name email')
-      .sort({ createdAt: -1 });
-    
-    // If user is not admin, filter by user's course and onSite status
-    if (!user.isAdmin && !user.isSuperAdmin) {
-      // Get all users who are in the same course and are onSite
-      const usersInSameCourse = await User.find({
-        userCourse: user.userCourse,
-        onSite: true
-      }).select('_id');
-      
-      const userIds = usersInSameCourse.map(u => u._id);
-      
-      // Filter assets to only include those uploaded by users in the same course who are onSite
-      assets = assets.filter(asset => 
-        userIds.some(id => id.equals(asset.uploadedBy))
-      );
+    if (!user.isAdmin && !user.isSuperAdmin && user.userCourse.toString() !== courseId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to access these assets'
+      });
     }
+    
+    const assets = await OnsiteAsset.find({ courseId })
+      .populate('uploadedBy', 'name email')
+      .populate('courseId', 'name')
+      .sort({ createdAt: -1 });
     
     res.json({
       success: true,
@@ -186,12 +199,20 @@ router.get('/:assetId', authJs, async (req, res) => {
   try {
     const asset = await OnsiteAsset.findById(req.params.assetId)
       .populate('uploadedBy', 'name email')
-      .populate('lectureId', 'title');
+      .populate('courseId', 'name');
       
     if (!asset) {
       return res.status(404).json({
         success: false,
         message: 'Asset not found'
+      });
+    }
+    
+    const user = await User.findById(req.decoded.userId);
+    if (!user.isAdmin && !user.isSuperAdmin && user.userCourse.toString() !== asset.courseId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to access this asset'
       });
     }
     
@@ -222,23 +243,20 @@ router.delete('/:assetId', authJs, async (req, res) => {
       });
     }
     
-    // Check if user is the uploader or an admin
-    if (asset.uploadedBy.toString() !== req.decoded.userId && !req.decoded.isAdmin) {
+    const user = await User.findById(req.decoded.userId);
+    if (asset.uploadedBy.toString() !== req.decoded.userId && !user.isAdmin && !user.isSuperAdmin) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete this asset'
       });
     }
     
-    // Delete from Cloudinary
     try {
-      const publicId = asset.webViewLink.split('/').pop().split('.')[0];
-      await cloudinary.uploader.destroy(`onsite-lectures/${asset.lectureId}/${publicId}`);
+      await cloudinary.uploader.destroy(asset.driveFileId);
     } catch (cloudinaryError) {
       console.error('Cloudinary delete error (proceeding with DB deletion):', cloudinaryError);
     }
     
-    // Delete from database
     await asset.deleteOne();
     
     res.json({
@@ -268,8 +286,13 @@ router.get('/download/:assetId', authJs, async (req, res) => {
       });
     }
     
-    // Check if user has access to the lecture this asset belongs to
-    // Note: You might want to add additional access control logic here
+    const user = await User.findById(req.decoded.userId);
+    if (!user.isAdmin && !user.isSuperAdmin && user.userCourse.toString() !== asset.courseId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to download this asset'
+      });
+    }
     
     res.json({
       success: true,
