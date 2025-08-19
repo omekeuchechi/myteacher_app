@@ -577,6 +577,99 @@ router.get('/user-transactions', authJs, async (req, res) => {
   }
 });
 
+router.post('/free-lecture', authJs, async (req, res) => {
+    try {
+        const { userId, lectureId, linkedLecture, courseImage } = req.body;
+        
+        // Find the user
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ success: false, message: 'User not found' });
+        }
 
+        // Find the upcoming lecture batch
+        const upcomingLecture = await UpcomingLectureBatch.findById(lectureId);
+        if (!upcomingLecture) {
+            return res.status(404).json({ success: false, message: 'Upcoming lecture not found' });
+        }
+        
+        if (!courseImage) {
+            return res.status(400).json({ success: false, message: 'Course image is required' });
+        }
+
+        // If linkedLecture is provided, add user to studentsEnrolled array of that lecture
+        if (linkedLecture) {
+            // First check if user is already enrolled
+            const existingLecture = await Lecture.findOne({
+                _id: linkedLecture,
+                studentsEnrolled: { $in: [userId] }
+            });
+
+            if (existingLecture) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'You are already enrolled in this lecture' 
+                });
+            }
+
+            const updatedLecture = await Lecture.findByIdAndUpdate(
+                linkedLecture,
+                { $addToSet: { studentsEnrolled: userId } }, // $addToSet prevents duplicates
+                { new: true }
+            );
+
+            if (!updatedLecture) {
+                return res.status(404).json({ success: false, message: 'Linked lecture not found' });
+            }
+
+            // Send confirmation email
+            const emailContent = `
+                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                    <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Enrollment Confirmation</h2>
+                    
+                    <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+                        <p style="font-size: 16px;">Hello ${user.name},</p>
+                        <p>You have been successfully enrolled in the lecture:</p>
+
+                        ${courseImage ? `<img src="${courseImage}" alt="Course" style="max-width: 100%; height: auto; margin: 15px 0; border-radius: 5px;">` : ''}
+                        
+                        <div style="background-color: white; padding: 15px; border-left: 4px solid #3498db; margin: 15px 0;">
+                            <h3 style="margin-top: 0; color: #2c3e50;">${upcomingLecture.courseName}</h3>
+                            <p><strong>Description:</strong> ${upcomingLecture.courseDescription || 'No description available'}</p>
+                            <p><strong>Instructor:</strong> ${upcomingLecture.courseIntructor || 'Myteacher Admin'}</p>
+                            <p><strong>Date & Time:</strong> ${new Date(upcomingLecture.startTime).toLocaleString()}</p>
+                            <p><strong>Platform:</strong> ${upcomingLecture.platform}</p>
+                        </div>
+                        
+                        <p>We look forward to seeing you in class!</p>
+                    </div>
+                    
+                    <p style="text-align: center; color: #7f8c8d; font-size: 14px;">
+                        This is an automated message. Please do not reply to this email.
+                    </p>
+                </div>
+            `;
+
+            await sendEmail({
+                to: user.email,
+                subject: `Enrollment Confirmation - ${upcomingLecture.courseName}`,
+                html: emailContent
+            });
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'User enrolled in lecture successfully',
+            lectureId: linkedLecture || lectureId
+        });
+    } catch (error) {
+        console.error('Error in free-lecture endpoint:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Server error',
+            error: error.message 
+        });
+    }
+});
 
 module.exports = router;
