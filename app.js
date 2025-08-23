@@ -1,5 +1,6 @@
 // all required packages for development
 const express = require('express');
+const app = express();
 const { default: mongoose } = require('mongoose');
 const cors = require('cors');
 const bodyParser = require('body-parser');
@@ -8,8 +9,11 @@ require('dotenv').config();
 const session = require('express-session');
 const passport = require('passport');
 require('./passport');
-
-const app = express();
+const http = require('http');
+const server = http.createServer(app);
+const io = require('socket.io')(server);
+const WebRTCService = require('./services/webrtcService');
+const webRTCService = new WebRTCService(io);
 
 // Increase limit for JSON parsing
 app.use(express.json({ limit: '1000mb' }));
@@ -26,7 +30,7 @@ app.use(passport.session());
 
 // ----------------- CORS CONFIGURATION -----------------
 app.use(cors({
-  origin: 'https://myteacher.institute' /*'http://localhost:5173'*/,
+  origin: /*'https://myteacher.institute'*/ 'http://localhost:5173',
   credentials: true
 }));
 
