@@ -9,11 +9,11 @@ require('dotenv').config();
 const session = require('express-session');
 const passport = require('passport');
 require('./passport');
-const http = require('http');
-const server = http.createServer(app);
-const io = require('socket.io')(server);
-const WebRTCService = require('./services/webrtcService');
-const webRTCService = new WebRTCService(io);
+// const http = require('http');
+// const server = http.createServer(app);
+// const io = require('socket.io')(server);
+// const WebRTCService = require('./services/webrtcService');
+// const webRTCService = new WebRTCService(io);
 
 // Increase limit for JSON parsing
 app.use(express.json({ limit: '1000mb' }));
