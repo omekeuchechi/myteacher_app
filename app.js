@@ -9,8 +9,11 @@ require('dotenv').config();
 const session = require('express-session');
 const passport = require('passport');
 require('./passport');
-const { Server } = require('socket.io');
-const WebRTCService = require('./services/webrtcService');
+// const http = require('http');
+// const server = http.createServer(app);
+// const io = require('socket.io')(server);
+// const WebRTCService = require('./services/webrtcService');
+// const webRTCService = new WebRTCService(io);
 
 // Increase limit for JSON parsing
 app.use(express.json({ limit: '1000mb' }));
@@ -27,7 +30,7 @@ app.use(passport.session());
 
 // ----------------- CORS CONFIGURATION -----------------
 app.use(cors({
-  origin: 'https://myteacher.institute' /*'http://localhost:5173'*/,
+  origin: /*'https://myteacher.institute'*/ 'http://localhost:5173',
   credentials: true
 }));
 
@@ -128,29 +131,6 @@ const connectWithRetry = async () => {
         console.error('❌ Error initializing scheduler:', schedulerError.message);
       }
     }
-
-    // Start server after MongoDB connection
-    const PORT = process.env.PORT || 5000;
-    const server = app.listen(PORT, () => {
-      console.log(api);
-      console.log(`Server is running at port ${PORT}`);
-    });
-
-    // Initialize Socket.IO
-    const io = new Server(server, {
-      cors: {
-        origin: process.env.NODE_ENV === 'production' 
-          ? 'https://myteacher.institute' 
-          : 'http://localhost:5173',
-        methods: ['GET', 'POST'],
-        credentials: true
-      }
-    });
-
-    // Initialize WebRTC service
-    const webRTCService = new WebRTCService(io);
-    console.log('✅ WebRTC service initialized');
-
   } catch (error) {
     console.error('❌ MongoDB connection error:', error.message);
     console.log('Retrying connection in 5 seconds...');
@@ -165,3 +145,10 @@ mongoose.connection.on('disconnected', () => {
 });
 
 connectWithRetry();
+
+// Start server
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(api);
+  console.log(`server is running at port ${PORT}`);
+});
