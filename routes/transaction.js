@@ -580,6 +580,7 @@ router.get('/user-transactions', authJs, async (req, res) => {
 router.post('/free-lecture', authJs, async (req, res) => {
     try {
         const { userId, lectureId, linkedLecture, courseImage } = req.body;
+        let downloadUrl = '';  // Initialize downloadUrl at the beginning of the function
         
         // Find the user
         const user = await User.findById(userId);
@@ -622,7 +623,64 @@ router.post('/free-lecture', authJs, async (req, res) => {
                 return res.status(404).json({ success: false, message: 'Linked lecture not found' });
             }
 
-            // Send confirmation email
+            // Check if certificate already exists for this user and lecture
+            const { SingleCrt, MultipleCrt } = require('../models/crt');
+            let existingCertificate = await SingleCrt.findOne({
+                userId: userId,
+                lectureId: linkedLecture
+            });
+
+            // If no certificate exists, generate one
+            if (!existingCertificate) {
+                const { generateCertificate } = require('../utils/certificateGenerator');
+                try {
+                    downloadUrl = await generateCertificate(
+                        user.name,
+                        upcomingLecture.courseName,
+                        linkedLecture
+                    );
+
+                    // Save the single certificate record
+                    const newCertificate = await SingleCrt.create({
+                        username: user.name,
+                        userId: userId,
+                        lectureId: linkedLecture,
+                        downloadurl: downloadUrl
+                    });
+
+                    // Update or create MultipleCrt record
+                    await MultipleCrt.findOneAndUpdate(
+                        { userId: userId },
+                        { 
+                            $set: { username: user.name },
+                            $addToSet: { crtId: newCertificate._id }
+                        },
+                        { upsert: true, new: true }
+                    );
+                    
+                    existingCertificate = newCertificate;
+                } catch (certError) {
+                    console.error('Error generating certificate:', certError);
+                    // Continue even if certificate generation fails
+                }
+            } else {
+                downloadUrl = existingCertificate.downloadurl;
+                
+                // Ensure the certificate is linked in MultipleCrt
+                await MultipleCrt.findOneAndUpdate(
+                    { 
+                        userId: userId,
+                        crtId: { $ne: existingCertificate._id }
+                    },
+                    { 
+                        $set: { username: user.name },
+                        $addToSet: { crtId: existingCertificate._id }
+                    },
+                    { upsert: true, new: true }
+                );
+            }
+
+            // Send confirmation email with certificate link if available
             const emailContent = `
                 <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
                     <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Enrollment Confirmation</h2>
@@ -660,13 +718,96 @@ router.post('/free-lecture', authJs, async (req, res) => {
         res.json({ 
             success: true, 
             message: 'User enrolled in lecture successfully',
-            lectureId: linkedLecture || lectureId
+            lectureId: linkedLecture || lectureId,
+            certificateUrl: downloadUrl || null
         });
     } catch (error) {
         console.error('Error in free-lecture endpoint:', error);
         res.status(500).json({ 
             success: false, 
             message: 'Server error',
+            error: error.message 
+        });
+    }
+});
+
+// Get all certificates for the authenticated user
+router.get('/certificates', authJs, async (req, res) => {
+    try {
+        const userId = req.decoded.userId; // Get user ID from auth token
+        
+        // Fetch all certificates for the user and populate lecture details
+        const certificates = await SingleCrt.find({ userId })
+            .populate('lectureId', 'title description startTime endTime');
+            
+        res.json({ 
+            success: true, 
+            count: certificates.length,
+            certificates 
+        });
+    } catch (error) {
+        console.error('Error in certificates endpoint:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Server error', 
+            error: error.message 
+        });
+    }
+});
+
+// Get a specific certificate by lecture ID for the authenticated user
+router.get('/certificate/:lectureId', authJs, async (req, res) => {
+    try {
+        const { lectureId } = req.params;
+        const userId = req.decoded.userId;
+        
+        const certificate = await SingleCrt.findOne({ 
+            userId,
+            lectureId 
+        }).populate('lectureId', 'title description startTime endTime');
+        
+        if (!certificate) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Certificate not found for this lecture' 
+            });
+        }
+        
+        res.json({ success: true, certificate });
+    } catch (error) {
+        console.error('Error in certificate endpoint:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Server error', 
+            error: error.message 
+        });
+    }
+});
+
+// api for deleting SingleCrt
+router.delete('/certificate/:lectureId', authJs, async (req, res) => {
+    try {
+        const { lectureId } = req.params;
+        const userId = req.decoded.userId;
+        
+        const certificate = await SingleCrt.findOneAndDelete({ 
+            userId,
+            lectureId 
+        });
+        
+        if (!certificate) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Certificate not found for this lecture' 
+            });
+        }
+        
+        res.json({ success: true, message: 'Certificate deleted successfully' });
+    } catch (error) {
+        console.error('Error in delete certificate endpoint:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Server error', 
             error: error.message 
         });
     }

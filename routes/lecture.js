@@ -116,6 +116,28 @@ router.get('/userSpecificLecture', authJs, async (req, res) => {
   }
 });
 
+// api for user to logout from the lecture batch studentsEnrolled: studentIds, using patch
+router.patch('/logout/:lectureId', authJs, async (req, res) => {
+  try {
+    const { lectureId } = req.params;
+    const userId = req.decoded.userId;
+    const lecture = await Lecture.findById(lectureId);
+    if (!lecture) {
+      return res.status(404).json({ message: "Lecture not found" });
+    }
+    const studentIds = lecture.studentsEnrolled;
+    const index = studentIds.indexOf(userId);
+    if (index > -1) {
+      studentIds.splice(index, 1);
+    }
+    await lecture.save();
+    res.json({ message: "User logged out from lecture batch" });
+  } catch (error) {
+    res.status(500).json({ message: "Error logging out from lecture batch", error: error.message });
+  }
+});
+
+
 // Admin creates a lecture batch
 router.post('/create-lecture-batch', authJs, isSuperAdmin, async (req, res) => {
   const isAdmin = req.decoded && req.decoded.isAdmin;

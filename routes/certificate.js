@@ -82,7 +82,11 @@ const gradeSubmissions = async () => {
             `;
             console.log(`Sending grading email to: ${details.studentEmail}`);
             try {
-                await sendEmail(details.studentEmail, subject, html);
+                await sendEmail({
+                    to: details.studentEmail,
+                    subject: subject,
+                    html: html
+                });
             } catch (emailError) {
                 console.error(`Failed to send email to ${details.studentEmail}:`, emailError);
             }
@@ -245,7 +249,12 @@ router.post('/grade-now', async (req, res) => {
                 <p>Best regards,<br>MyTeacher App</p>
             `;
             console.log(`Sending grading email to: ${details.studentEmail}`);
-            await sendEmail(details.studentEmail, subject, html);
+            await sendEmail({
+                to: details.studentEmail,
+                subject: subject,
+                html: html
+            });
+
         }
 
         res.status(200).json({
@@ -513,8 +522,16 @@ router.get('/user/:userId', async (req, res) => {
         // Process scores, keeping only the most recent entry for each lecture
         for (const score of sortedScores) {
             console.log(score);
-            const lectureId = score.lecture._id.toString();
-            if (!lectureMap.has(lectureId)) {
+            
+            // Skip if lecture is null or undefined
+            if (!score) {
+                console.warn('Skipping score with missing lecture:', score._id);
+                continue;
+            }
+
+            const lectureId = score.lecture._id ? score.lecture._id.toString() : null;
+            
+            if (lectureId && !lectureMap.has(lectureId)) {
                 lectureMap.set(lectureId, true);
                 
                 uniqueCertificates.push({
