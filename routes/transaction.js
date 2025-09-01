@@ -5,6 +5,7 @@ const authJs = require('../middlewares/auth');
 const Course = require('../models/course');
 const Transaction = require('../models/transaction');
 const Enrollment = require('../models/enrollment');
+const { SingleCrt, MultipleCrt } = require('../models/crt');
 const Lecture = require('../models/lecture'); // Import Lecture model
 const UpcomingLectureBatch = require('../models/upcomingLectureBatch'); // Import UpcomingLectureBatch model
 const Pusher = require('pusher');

@@ -75,7 +75,7 @@ const authJs = (req, res, next) => {
         if (error.name === 'TokenExpiredError') {
             return res.status(401).json({
                 success: false,
-                message: 'Session expired',
+                message: 'Session expired or invalid token try to Login again',
                 error: 'Your session has    expired. Please log in again.'
             });
         }
