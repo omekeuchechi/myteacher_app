@@ -5,7 +5,7 @@ const authJs = require('../middlewares/auth');
 const Post = require('../models/post');
 
 router.post('/:postId/postComment', authJs, async (req, res) =>{
-    const postId = req.params.post;
+    const postId = req.params.postId;
     const userId = req.decoded.userId;
 
     const postComment = new Comment({
@@ -18,10 +18,12 @@ router.post('/:postId/postComment', authJs, async (req, res) =>{
         const post = await Post.findById(postId);
 
         if (!post) {
-            return res.status(404).send('post not found');
+            return res.status(404).json({
+                message: "post not found"
+            });
         }
 
-        post.Comments.push(postComment._id);
+        post.comments.push(postComment._id);
 
 
         const createdComment = await postComment.save();

@@ -4,69 +4,42 @@ const router = express.Router();
 const mongoose = require('mongoose');
 const { Worker } = require('worker_threads');
 const path = require('path');
-const multer = require('multer');
 const Pusher = require('pusher');
 const authJs = require('../middlewares/auth');
 const Post = require('../models/post');
 const User = require('../models/user');
 const NodeCache = require('node-cache');
+const { Buffer } = require('buffer');
 
 // Initialize cache
 const postCache = new NodeCache({ stdTTL: 300 });
 
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const fileFilter = (req, file, cb) => {
-  const filetypes = /jpeg|jpg|png|gif|webp/;
-  const extname = filetypes.test(path.extname(file.originalname).toLowerCase());
-  const mimetype = filetypes.test(file.mimetype);
-  if (mimetype && extname) {
-    return cb(null, true);
-  }
-  cb(new Error('Only image files are allowed (jpeg, jpg, png, gif, webp)'));
-};
-
-const upload = multer({
-  storage: storage,
-  limits: { 
-    fileSize: 100 * 1024 * 1024, // 100MB limit
-    files: 101, // 1 featuredImage + 100 images
-    fields: 20, // Max 20 non-file fields
-    parts: 121, // files + fields
-  },
-  fileFilter: fileFilter,
-  preservePath: true
-});
-
-// Create a middleware function that handles the upload
-const handleUpload = (req, res, next) => {
-  // Handle both single featuredImage and multiple images
-  const uploadMiddleware = upload.fields([
-    { name: 'featuredImage', maxCount: 1 },
-    { name: 'images', maxCount: 100 }
-  ]);
+// Helper function to process base64 data
+const processBase64Data = (base64String) => {
+  if (!base64String) return null;
   
-  uploadMiddleware(req, res, function(err) {
-    if (err) {
-      console.error('Upload error:', err);
-      return res.status(400).json({
-        success: false,
-        message: err instanceof multer.MulterError 
-          ? `File upload error: ${err.message}` 
-          : 'Error processing upload',
-        error: err.message,
-        code: err.code
-      });
+  try {
+    // Remove data URL prefix if present
+    const matches = base64String.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    if (!matches || matches.length !== 3) {
+      throw new Error('Invalid base64 string');
     }
     
-    // Attach files to the request for easier access
-    req.uploadedFiles = {
-      featuredImage: req.files?.featuredImage?.[0],
-      images: req.files?.images || []
-    };
+    const contentType = matches[1];
+    const data = Buffer.from(matches[2], 'base64');
     
-    next();
-  });
+    // Extract file extension from content type
+    const extension = contentType.split('/')[1] || 'bin';
+    
+    return {
+      buffer: data,
+      mimetype: contentType,
+      originalname: `file-${Date.now()}.${extension}`
+    };
+  } catch (error) {
+    console.error('Error processing base64 data:', error);
+    return null;
+  }
 };
 
 // Initialize Pusher
@@ -168,8 +141,8 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Create post with image uploads
-router.post('/create', authJs, (req, res, next) => {
+// Create post with base64 file uploads
+router.post('/create', authJs, async (req, res) => {
   // Verify admin status
   const user = req.decoded;
   
@@ -180,63 +153,71 @@ router.post('/create', authJs, (req, res, next) => {
     });
   }
   
-  // Handle file uploads
-  handleUpload(req, res, async () => {
-    try {
-      // Validate required fields
-      if (!req.body.title || !req.body.content) {
-        return res.status(400).json({
-          success: false,
-          message: 'Title and content are required'
-        });
-      }
-
-      // Prepare post data
-      const postData = {
-        title: req.body.title,
-        content: req.body.content,
-        category: req.body.category || 'Uncategorized',
-        createdBy: user.userId,
-        tags: req.body.tags ? req.body.tags.split(',').map(tag => tag.trim()) : [],
-        featuredImage: null,
-        images: []
-      };
-      
-      // Process uploaded files
-      const filesToProcess = [];
-      
-      // Add featured image if exists
-      if (req.uploadedFiles?.featuredImage) {
-        filesToProcess.push({
-          file: req.uploadedFiles.featuredImage,
-          isFeatured: true
-        });
-      }
-      
-      // Add other images
-      if (req.uploadedFiles?.images?.length) {
-        req.uploadedFiles.images.forEach(file => {
-          filesToProcess.push({
-            file,
-            isFeatured: false
-          });
-        });
-      }
-      
-      // Create post with all files using worker thread
-      const result = await createPostWorker(postData, filesToProcess);
-      
-      res.status(result.success ? 201 : 500).json(result);
-    } catch (error) {
-      console.error('Error in post creation:', error);
-      res.status(500).json({ 
+  try {
+    // Validate required fields
+    if (!req.body.title || !req.body.content) {
+      return res.status(400).json({
         success: false,
-        message: "Error creating post", 
-        error: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        message: 'Title and content are required'
       });
     }
-  });
+
+    // Prepare post data
+    const postData = {
+      title: req.body.title,
+      content: req.body.content,
+      category: req.body.category || 'Uncategorized',
+      createdBy: user.userId,
+      tags: req.body.tags ? req.body.tags.split(',').map(tag => tag.trim()) : [],
+      featuredImage: null,
+      images: []
+    };
+    
+    // Process uploaded files
+    const filesToProcess = [];
+    
+    // Process featured image if provided
+    if (req.body.featuredImage) {
+      const processedFile = processBase64Data(req.body.featuredImage);
+      if (processedFile) {
+        filesToProcess.push({
+          file: processedFile,
+          isFeatured: true
+        });
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid featured image format'
+        });
+      }
+    }
+    
+    // Process additional images if provided
+    if (req.body.images && Array.isArray(req.body.images)) {
+      for (const img of req.body.images) {
+        const processedFile = processBase64Data(img);
+        if (processedFile) {
+          filesToProcess.push({
+            file: processedFile,
+            isFeatured: false
+          });
+        }
+      }
+    }
+    
+    // Create post with all files using worker thread
+    const result = await createPostWorker(postData, filesToProcess);
+    
+    res.status(result.success ? 201 : 500).json(result);
+  } catch (error) {
+    console.error('Error in post creation:', error);
+    res.status(500).json({ 
+      success: false,
+      message: "Error creating post", 
+      error: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
 });
 
 // Get all posts with pagination and caching
@@ -336,10 +317,13 @@ router.patch('/:postId/like', authJs, async (req, res) => {
     
     res.status(200).json({
       message: "Post liked successfully",
-      likesCount: post.likes.length
+      likesCount: post.likes.length,
+      isLiked: true
     });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    res.status(400).json({
+      message: error.message || 'Error liking post'
+    });
   }
 });
 
@@ -354,10 +338,13 @@ router.patch('/:postId/unlike', authJs, async (req, res) => {
     
     res.status(200).json({
       message: "Post unliked successfully",
-      likesCount: post.likes.length
+      likesCount: post.likes.length,
+      isLiked: false
     });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    res.status(400).json({
+      message: error.message || 'Error unliking post'
+    });
   }
 });
 

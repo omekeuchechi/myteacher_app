@@ -80,7 +80,7 @@ app.use(bodyParser.json());
 app.use(morgan('tiny'));
 app.use(`/user`, userRouter);
 app.use(`/posts`, postRouter);
-app.use(`/comment`, commentRouter);
+app.use(`/comments`, commentRouter);
 app.use(`/setting`, settingRouter);
 app.use(`/transaction`, transactionRouter);
 app.use(`/admin`, adminRoutes);
