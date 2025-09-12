@@ -6,7 +6,7 @@ const transactionSchema = new mongoose.Schema({
   amount: Number,
   currency: String,
   paymentReference: String,
-  status: String,
+  status: { type: String, enum: ['pending', 'success', 'failed'], default: 'pending' },
   paymentMethod: String,
   createdAt: { type: Date, default: Date.now }
 });

@@ -10,6 +10,10 @@ const sendEmail = require('../lib/sendEmail');
 const { getAIScoreAndCorrection } = require('../utils/aiService');
 const authJs = require('../middlewares/auth');
 const CertificateService = require('../services/certificateService');
+const { SingleCrt } = require('../models/crt');
+const Transaction = require('../models/transaction'); // Assuming you have a Transaction model
+const axios = require('axios');
+const crypto = require('crypto');
 
 // Apply authentication middleware to all certificate routes
 router.use(authJs);
@@ -129,13 +133,13 @@ router.get('/student/results', authJs, async (req, res) => {
         // Find all certificates for the user with timeout handling
         let certificates;
         try {
-            certificates = await Certificate.find({ user: userId })
+            certificates = await SingleCrt.find({ userId: userId })
                 .populate({
-                    path: 'certScores.lecture',
+                    path: 'lectureId',
                     select: 'name description _id',
                     model: 'Lecture'
                 })
-                .populate('user', 'name email') // Populate user details
+                .populate('userId', 'name email') // Populate user details
                 .maxTimeMS(10000) // 10 second timeout
                 .lean();
                 
@@ -339,7 +343,7 @@ router.get('/student/results', authJs, async (req, res) => {
         const studentId = req.decoded.id || req.decoded.userId || req.decoded._id || req.decoded; // Get student ID from authenticated token
 
         // 1. Fetch the student's certificate
-        const certificate = await Certificate.findOne({ student: studentId })
+        const certificate = await SingleCrt.findOne({ userId: studentId })
             .populate('student', 'name email');
 
         // 2. Fetch all assignments the student has submitted to
@@ -393,9 +397,9 @@ router.get('/:certificateId', authJs, async (req, res) => {
             });
         }
 
-        const certificate = await Certificate.findById(req.params.certificateId)
-            .populate('user', 'name email')
-            .populate('certScores.lecture', 'name description');
+        const certificate = await SingleCrt.findById(req.params.certificateId)
+            .populate('userId', 'name email')
+            .populate('lectureId', 'name description');
 
         if (!certificate) {
             return res.status(404).json({
@@ -405,7 +409,7 @@ router.get('/:certificateId', authJs, async (req, res) => {
         }
 
         // Check if the requesting user is the owner or an admin
-        if (certificate.user._id.toString() !== req.user._id.toString() && !req.user.isAdmin) {
+        if (certificate.userId._id.toString() !== req.user._id.toString() && !req.user.isAdmin) {
             return res.status(403).json({
                 success: false,
                 message: 'Not authorized to view this certificate'
@@ -416,14 +420,14 @@ router.get('/:certificateId', authJs, async (req, res) => {
         const validScores = certificate.certScores.filter(score => {
             try {
                 if (!score) return false;
-                if (!score.lecture) {
+                if (!score.lectureId) {
                     console.warn('Score missing lecture:', score._id);
                     return false;
                 }
-                if (!score.lecture._id || typeof score.lecture._id.toString !== 'function') {
+                if (!score.lectureId._id || typeof score.lectureId._id.toString !== 'function') {
                     console.warn('Invalid lecture ID in score:', {
                         scoreId: score._id,
-                        lecture: score.lecture
+                        lecture: score.lectureId
                     });
                     return false;
                 }
@@ -490,9 +494,9 @@ router.get('/user/:userId', async (req, res) => {
 
         // Get the certificate document for the user
         console.log('Fetching certificate document...');
-        const certificate = await Certificate.findOne({ user: req.params.userId })
+        const certificate = await SingleCrt.findOne({ userId: req.params.userId })
             .populate({
-                path: 'certScores.lecture',
+                path: 'lectureId',
                 select: '_id name description',
                 options: { lean: true }
             })
@@ -529,14 +533,14 @@ router.get('/user/:userId', async (req, res) => {
                 continue;
             }
 
-            const lectureId = score.lecture._id ? score.lecture._id.toString() : null;
+            const lectureId = score.lectureId ? score.lectureId.toString() : null;
             
             if (lectureId && !lectureMap.has(lectureId)) {
                 lectureMap.set(lectureId, true);
                 
                 uniqueCertificates.push({
                     _id: `cert-${lectureId}-${score._id}`,
-                    lecture: score.lecture,
+                    lecture: score.lectureId,
                     score: score.score,
                     grade: calculateGrade(score.score),
                     issuedAt: score.issuedAt || new Date(),
@@ -560,15 +564,57 @@ router.get('/user/:userId', async (req, res) => {
     }
 });
 
-// Helper function to calculate grade based on score
-function calculateGrade(score) {
-    if (score >= 90) return 'A+ (Distinction)';
-    if (score >= 80) return 'A (Excellent)';
-    if (score >= 70) return 'B+ (Very Good)';
-    if (score >= 60) return 'B (Good)';
-    if (score >= 50) return 'C (Satisfactory)';
-    return 'D (Pass)';
-}
+// api for downloading certificate
+router.get('/download-certificate/:lectureId/:userId', authJs, async (req, res) => {
+    try {
+        const { lectureId, userId } = req.params;
+        
+        // Check if certificate exists
+        const certificate = await SingleCrt.findOne({ 
+            userId: userId,
+            lectureId 
+        }).populate('lectureId', 'title description startTime endTime price');
+        
+        if (!certificate) {
+            return res.status(404).json({ 
+                success: false, 
+                message: 'Certificate not found for this lecture' 
+            });
+        }
+
+        // Check if user has paid for this lecture
+        const transaction = await Transaction.findOne({
+            userId: userId,
+            courseId: lectureId, // Changed from lectureId to courseId to match schema
+            status: 'success' // Ensure it's a successful transaction
+        });
+
+        if (!transaction) {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Payment verification required to download this certificate',
+                paymentRequired: true,
+                amount: 200000, // Assuming price is stored in the lecture
+                currency: 'NGN' // Default to Naira
+            });
+        }
+
+        // If payment is verified, return the certificate
+        res.json({ 
+            success: true, 
+            certificate,
+            paymentStatus: 'verified'
+        });
+
+    } catch (error) {
+        console.error('Error in certificate download endpoint:', error);
+        res.status(500).json({ 
+            success: false, 
+            message: 'Server error', 
+            error: error.message 
+        });
+    }
+});
 
 // Download certificate as PDF for a specific score
 router.get('/download/:scoreId', async (req, res) => {
@@ -626,13 +672,9 @@ router.get('/download/:scoreId', async (req, res) => {
             
             // Find the user's certificate
             const userId = authenticatedUser.id || authenticatedUser._id;
-            certificate = await Certificate.findOne({ user: userId })
+            certificate = await SingleCrt.findOne({ userId: userId })
                 .populate({
-                    path: 'user',
-                    select: 'name email'
-                })
-                .populate({
-                    path: 'certScores.lecture',
+                    path: 'lectureId',
                     select: 'title description',  // Changed from 'name' to 'title'
                     // Ensure we're not getting null lectures
                     match: { _id: { $exists: true } }
@@ -646,7 +688,7 @@ router.get('/download/:scoreId', async (req, res) => {
             }
 
             // Filter out any null lectures that didn't match the population
-            certificate.certScores = certificate.certScores.filter(score => score.lecture);
+            certificate.certScores = certificate.certScores.filter(score => score.lectureId);
             
             if (certificate.certScores.length === 0) {
                 return res.status(404).json({
@@ -667,14 +709,14 @@ router.get('/download/:scoreId', async (req, res) => {
             certScore = certificate.certScores[scoreIdx];
             
             // If we still don't have complete lecture data, try to handle it
-            if (certScore.lecture && !certScore.lecture.name) {
-                console.log('Handling lecture data with custom structure:', certScore.lecture);
+            if (certScore.lectureId && !certScore.lectureId.name) {
+                console.log('Handling lecture data with custom structure:', certScore.lectureId);
                 // If lecture is just an ID string, try to fetch it
-                if (typeof certScore.lecture === 'string') {
+                if (typeof certScore.lectureId === 'string') {
                     const Lecture = require('../models/lecture');
-                    const lecture = await Lecture.findById(certScore.lecture).select('title description');
+                    const lecture = await Lecture.findById(certScore.lectureId).select('title description');
                     if (lecture) {
-                        certScore.lecture = {
+                        certScore.lectureId = {
                             name: lecture.title || `Lecture ${scoreIndex}`,
                             description: lecture.description || 'No description available',
                             _id: lecture._id.toString()
@@ -682,19 +724,18 @@ router.get('/download/:scoreId', async (req, res) => {
                     }
                 } 
                 // If lecture is an object but missing name, use title or default
-                else if (certScore.lecture) {
-                    certScore.lecture.name = certScore.lecture.name || 
-                                          certScore.lecture.title || 
+                else if (certScore.lectureId) {
+                    certScore.lectureId.name = certScore.lectureId.name || 
+                                          certScore.lectureId.title || 
                                           `Lecture ${scoreIndex}`;
-                    certScore.lecture.description = certScore.lecture.description || 'No description available';
+                    certScore.lectureId.description = certScore.lectureId.description || 'No description available';
                 }
             }
         } else {
             // Handle the case where scoreId is a MongoDB ObjectId
-            certificate = await Certificate.findOne({
+            certificate = await SingleCrt.findOne({
                 'certScores._id': scoreId
-            }).populate('user', 'name email')
-              .populate('certScores.lecture', 'name description');
+            }).populate('lectureId', 'name description');
 
             if (!certificate) {
                 return res.status(404).json({
@@ -715,48 +756,48 @@ router.get('/download/:scoreId', async (req, res) => {
         }
 
         // Check if we have the necessary data
-        if (!certScore.lecture) {
+        if (!certScore.lectureId) {
             console.error('No lecture data found in certScore:', certScore);
             return res.status(404).json({
                 success: false,
                 message: 'Lecture data not found for this certificate',
                 debug: {
                     certScoreId: certScore._id,
-                    hasLecture: !!certScore.lecture,
-                    lectureId: certScore.lecture?._id || certScore.lecture
+                    hasLecture: !!certScore.lectureId,
+                    lectureId: certScore.lectureId?._id || certScore.lectureId
                 }
             });
         }
 
         // Debug log to see the lecture data
         console.log('Lecture data before PDF generation:', {
-            lecture: certScore.lecture,
-            hasName: !!certScore.lecture?.name,
-            lectureId: certScore.lecture._id || certScore.lecture,
-            lectureRaw: JSON.stringify(certScore.lecture)
+            lecture: certScore.lectureId,
+            hasName: !!certScore.lectureId?.name,
+            lectureId: certScore.lectureId._id || certScore.lectureId,
+            lectureRaw: JSON.stringify(certScore.lectureId)
         });
 
         try {
             // Ensure we have the lecture title
-            if (!certScore.lecture.title && certScore.lecture._id) {
+            if (!certScore.lectureId.title && certScore.lectureId._id) {
                 console.log('Lecture title is missing, trying to populate it...');
                 const Lecture = require('../models/lecture');
-                const lecture = await Lecture.findById(certScore.lecture._id).select('title description');
+                const lecture = await Lecture.findById(certScore.lectureId._id).select('title description');
                 if (lecture) {
-                    certScore.lecture = lecture;
+                    certScore.lectureId = lecture;
                     console.log('Successfully populated lecture:', lecture);
                 }
             }
 
             // Generate the PDF
             const pdfBytes = await CertificateService.generateCertificate(
-                certificate.user,
-                certScore.lecture,
+                certificate.userId,
+                certScore.lectureId,
                 certScore.score
             );
 
             // Create a safe filename
-            const lectureName = certScore.lecture.name || 'certificate';
+            const lectureName = certScore.lectureId.name || 'certificate';
             const safeFilename = `${lectureName.replace(/[^\w\s]/gi, '')}_Certificate`.replace(/\s+/g, '_');
             
             // Set headers for file download
@@ -779,34 +820,214 @@ router.get('/download/:scoreId', async (req, res) => {
     }
 });
 
-// Helper function to check database connection and collections
-async function checkDatabase() {
-    try {
-        console.log('=== DATABASE STATUS ===');
-        console.log('Mongoose connection state:', mongoose.connection.readyState);
-        
-        // Get database instance
-        const db = mongoose.connection.db;
-        if (!db) {
-            throw new Error('No database connection');
-        }
-        
-        // List all collections
-        const collections = await db.listCollections().toArray();
-        console.log('Available collections:', collections.map(c => c.name));
-        
-        // Check if users collection exists
-        const usersCollection = collections.find(c => c.name === 'users' || c.name === 'Users');
-        if (!usersCollection) {
-            throw new Error('Users collection not found in database');
-        }
-        
-        return true;
-    } catch (error) {
-        console.error('Database check failed:', error);
-        return false;
+// PAYSTACK PAYMENT INITIALIZATION FOR CERTIFICATE DOWNLOAD
+router.post('/initiate-certificate-payment', authJs, async (req, res) => {
+  try {
+    const { lectureId } = req.body;
+    const userId = req.user?.id || req.decoded?.id;
+
+    // Input validation
+    if (!lectureId) {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Lecture ID is required' 
+      });
     }
-}
+
+    // Check if certificate exists for this user and lecture
+    const certificate = await SingleCrt.findOne({
+      userId,
+      'lectureId': lectureId
+    }).populate('lectureId', 'title');
+
+    if (!certificate) {
+      return res.status(404).json({
+        success: false,
+        message: 'Certificate not found for this lecture'
+      });
+    }
+
+    const amount = 2000; // ₦2,000 in kobo
+    const currency = 'NGN';
+    const reference = `cert_${Date.now()}_${userId}`;
+
+    // Initialize Paystack payment
+    const response = await axios.post(
+      'https://api.paystack.co/transaction/initialize',
+      {
+        email: req.user?.email || req.decoded?.email,
+        amount: amount * 100, // Convert to kobo
+        currency,
+        reference,
+        metadata: {
+          userId,
+          lectureId,
+          certificateId: certificate._id,
+          purpose: 'certificate_download',
+          type: 'certificate_payment'
+        }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_MODE === 'DEVELOPMENT' ? 
+            process.env.PAYSTACK_TESTING_SECRET_KEY : 
+            process.env.PAYSTACK_SECRET_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (!response.data.data) {
+      throw new Error('Invalid Paystack response');
+    }
+
+    // Create a pending transaction record
+    await Transaction.create({
+      userId,
+      lectureId,
+      amount,
+      currency,
+      paymentReference: reference,
+      status: 'pending',
+      paymentMethod: 'paystack',
+      type: 'certificate_payment',
+      metadata: {
+        certificateId: certificate._id,
+        purpose: 'certificate_download'
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Payment initialized successfully',
+      authorizationUrl: response.data.data.authorization_url,
+      reference: reference
+    });
+
+  } catch (error) {
+    console.error('Error initializing certificate payment:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to initialize payment',
+      error: error.response?.data?.message || error.message
+    });
+  }
+});
+
+// Handle Paystack webhook for certificate payment verification
+router.post('/certificate-payment-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const signature = req.headers['x-paystack-signature'];
+  
+  if (!signature) {
+    return res.status(400).send('No signature');
+  }
+
+  const hash = crypto
+    .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+    .update(JSON.stringify(req.body))
+    .digest('hex');
+
+  if (hash !== signature) {
+    return res.status(400).send('Invalid signature');
+  }
+
+  const event = req.body;
+  
+  // Handle the event
+  if (event.event === 'charge.success') {
+    const { reference, metadata } = event.data;
+    
+    if (metadata?.purpose === 'certificate_download') {
+      try {
+        // Verify the transaction
+        const response = await axios.get(
+          `https://api.paystack.co/transaction/verify/${reference}`,
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.PAYSTACK_MODE === 'DEVELOPMENT' ? 
+                process.env.PAYSTACK_TESTING_SECRET_KEY : 
+                process.env.PAYSTACK_SECRET_KEY}`
+            }
+          }
+        );
+
+        const paymentData = response.data.data;
+        
+        if (paymentData.status === 'success') {
+          // Update transaction status
+          await Transaction.findOneAndUpdate(
+            { paymentReference: reference },
+            { 
+              status: 'completed',
+              paymentData: paymentData
+            },
+            { new: true }
+          );
+
+          // Here you can add any additional logic for successful payment
+          // For example, update certificate status or send download link
+          
+          return res.status(200).json({ received: true });
+        }
+      } catch (error) {
+        console.error('Error verifying payment:', error);
+        return res.status(400).send('Verification failed');
+      }
+    }
+  }
+
+  res.status(200).json({ received: true });
+});
+
+// Verify Paystack payment and update certificate status
+router.post('/verify-payment', authJs, async (req, res) => {
+  try {
+    const { reference, certificateId, lectureId } = req.body;
+    const userId = req.user.id;
+
+    // Verify payment with Paystack
+    const response = await axios.get(`https://api.paystack.co/transaction/verify/${reference}`, {
+      headers: {
+        Authorization: `Bearer ${process.env.PAYSTACK_MODE === 'DEVELOPMENT' ? process.env.PAYSTACK_TESTING_SECRET_KEY : process.env.PAYSTACK_SECRET_KEY}`
+      }
+    });
+
+    if (response.data.status === true) {
+      // Payment successful, create transaction record
+      const transaction = new Transaction({
+        userId,
+        courseId: lectureId,
+        amount: response.data.data.amount / 100, // Convert from kobo to Naira
+        status: 'success',
+        reference: response.data.data.reference,
+        metadata: {
+          certificateId,
+          paymentMethod: 'paystack'
+        }
+      });
+
+      await transaction.save();
+      
+      // Update SingleCrt payment status and date
+      await SingleCrt.findOneAndUpdate(
+        { _id: certificateId, userId, lectureId: lectureId }, // Update the lookup to use SingleCrt with the correct field names
+        { 
+          $set: { 
+            paymentVerified: true,
+            paymentDate: new Date()
+          } 
+        }
+      );
+
+      return res.json({ success: true });
+    }
+
+    throw new Error('Payment verification failed');
+  } catch (error) {
+    console.error('Payment verification error:', error);
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
 
 // Download total score certificate as PDF
 router.get('/download-total-certificate/:userId', authJs, async (req, res) => {
@@ -903,8 +1124,8 @@ router.get('/download-total-certificate/:userId', authJs, async (req, res) => {
         }
 
         // Get all certificates for the user
-        const certificates = await Certificate.find({ user: userId })
-            .populate('certScores.lecture', 'name description');
+        const certificates = await SingleCrt.find({ userId: userId })
+            .populate('lectureId', 'name description');
         
         if (!certificates || certificates.length === 0) {
             return res.status(404).json({
@@ -937,6 +1158,124 @@ router.get('/download-total-certificate/:userId', authJs, async (req, res) => {
             error: error.message
         });
     }
+});
+
+// Initiate Paystack payment for certificate download
+router.post('/initiate-certificate-payment', authJs, async (req, res) => {
+    try {
+        const { certificateId, lectureId, email } = req.body;
+        const userId = req.user.id;
+
+        // Find the certificate to verify it exists
+        const certificate = await SingleCrt.findOne({ 
+            _id: certificateId,
+            lectureId: lectureId,
+            userId: userId
+        });
+
+        if (!certificate) {
+            return res.status(404).json({
+                success: false,
+                message: 'Certificate not found for this lecture'
+            });
+        }
+
+        // Create payment data for Paystack
+        const paymentData = {
+            email: email || req.user.email,
+            amount: 200000, // 2000 Naira in kobo
+            reference: `cert_${Date.now()}_${userId}`,
+            metadata: {
+                userId: userId,
+                lectureId: lectureId,
+                certificateId: certificateId,
+                purpose: 'certificate_download'
+            },
+            callback_url: `${process.env.CLIENT_URL}/certificates`
+        };
+
+        // Initialize Paystack payment
+        const response = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            paymentData,
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.PAYSTACK_MODE === 'DEVELOPMENT' ? process.env.PAYSTACK_TESTING_SECRET_KEY : process.env.PAYSTACK_SECRET_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        // Create a pending transaction record
+        const transaction = new Transaction({
+            userId: userId,
+            courseId: lectureId,
+            amount: paymentData.amount,
+            currency: 'NGN',
+            paymentReference: paymentData.reference,
+            status: 'pending',
+            metadata: {
+                certificateId: certificateId,
+                paymentMethod: 'paystack'
+            }
+        });
+
+        await transaction.save();
+
+        res.json({
+            success: true,
+            message: 'Payment initialized successfully',
+            authorizationUrl: response.data.data.authorization_url,
+            reference: paymentData.reference
+        });
+
+    } catch (error) {
+        console.error('Error initializing certificate payment:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to initialize payment',
+            error: error.response?.data?.message || error.message
+        });
+    }
+});
+
+// Paystack webhook for payment verification
+router.post('/paystack-webhook', async (req, res) => {
+    const signature = req.headers['x-paystack-signature'];
+    const hash = crypto.createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
+                      .update(JSON.stringify(req.body))
+                      .digest('hex');
+
+    if (hash !== signature) {
+        return res.status(401).json('Invalid signature');
+    }
+
+    const event = req.body;
+
+    // Handle the event
+    if (event.event === 'charge.success') {
+        const { reference } = event.data;
+
+        try {
+            // Update transaction status
+            await Transaction.findOneAndUpdate(
+                { paymentReference: reference },
+                { 
+                    status: 'success',
+                    updatedAt: new Date()
+                }
+            );
+
+            // You can add additional logic here, like sending email confirmation
+            
+            return res.status(200).json({ received: true });
+        } catch (error) {
+            console.error('Error processing webhook:', error);
+            return res.status(400).json('Webhook processing failed');
+        }
+    }
+
+    res.status(200).json({ received: true });
 });
 
 module.exports = router;

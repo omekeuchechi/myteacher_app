@@ -635,7 +635,7 @@ router.post('/free-lecture', authJs, async (req, res) => {
             if (!existingCertificate) {
                 const { generateCertificate } = require('../utils/certificateGenerator');
                 try {
-                    downloadUrl = await generateCertificate(
+                    downloadurl = await generateCertificate(
                         user.name,
                         upcomingLecture.courseName,
                         linkedLecture
@@ -643,10 +643,10 @@ router.post('/free-lecture', authJs, async (req, res) => {
 
                     // Save the single certificate record
                     const newCertificate = await SingleCrt.create({
-                        username: user.name,
                         userId: userId,
                         lectureId: linkedLecture,
-                        downloadurl: downloadUrl
+                        username: user.name,
+                        downloadurl: downloadurl
                     });
 
                     // Update or create MultipleCrt record
@@ -665,7 +665,7 @@ router.post('/free-lecture', authJs, async (req, res) => {
                     // Continue even if certificate generation fails
                 }
             } else {
-                downloadUrl = existingCertificate.downloadurl;
+                downloadurl = existingCertificate.downloadurl;
                 
                 // Ensure the certificate is linked in MultipleCrt
                 await MultipleCrt.findOneAndUpdate(
@@ -813,5 +813,192 @@ router.delete('/certificate/:lectureId', authJs, async (req, res) => {
         });
     }
 });
+
+// API for purchasing SingleCrt with Paystack
+router.post('/purchase/certificate', authJs, async (req, res) => {
+    try {
+        const { userId, lectureId, username, email, amount } = req.body;
+        
+        // Validate required fields
+        if (!userId || !lectureId || !email) {
+            return res.status(400).json({
+                success: false,
+                message: 'Missing required fields: userId, lectureId, and email are required'
+            });
+        }
+
+        // Generate a unique reference
+        const reference = `crt_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+        
+        // Initialize payment with Paystack
+        const paystackResponse = await axios.post(
+            'https://api.paystack.co/transaction/initialize',
+            {
+                email,
+                amount: amount * 100, // Convert to kobo
+                reference,
+                callback_url: `${process.env.BASE_URL}/transactions/certificate/callback`,
+                metadata: {
+                    userId,
+                    lectureId,
+                    username,
+                    type: 'single_certificate'
+                }
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        // Create a pending transaction record
+        await Transaction.create({
+            userId,
+            reference,
+            amount,
+            status: 'pending',
+            type: 'certificate_purchase',
+            metadata: {
+                lectureId,
+                username
+            }
+        });
+
+        res.json({
+            success: true,
+            message: 'Payment initialized successfully',
+            data: {
+                authorizationUrl: paystackResponse.data.data.authorization_url,
+                reference
+            }
+        });
+    } catch (error) {
+        console.error('Error initializing certificate purchase:', error.response?.data || error.message);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to initialize payment',
+            error: error.response?.data?.message || error.message
+        });
+    }
+});
+
+// Certificate purchase callback
+router.all('/certificate/callback', async (req, res) => {
+    const { reference } = req.query;
+
+    try {
+        // Verify the payment with Paystack
+        const response = await axios.get(
+            `https://api.paystack.co/transaction/verify/${reference}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`
+                }
+            }
+        );
+
+        const paymentData = response.data.data;
+        
+        // Check if payment was successful
+        if (paymentData.status !== 'success') {
+            await Transaction.updateOne(
+                { reference },
+                { status: 'failed' }
+            );
+            return res.status(400).send('Payment was not successful');
+        }
+
+        // Get the transaction from our database
+        const transaction = await Transaction.findOne({ reference });
+        if (!transaction) {
+            return res.status(404).send('Transaction not found');
+        }
+
+        // Check if already processed
+        if (transaction.status === 'completed') {
+            return res.send('Certificate already issued');
+        }
+
+        // Extract metadata
+        const { userId, lectureId, username } = paymentData.metadata;
+        
+
+        // Create the SingleCrt record
+        const certificate = await SingleCrt.create({
+            userId,
+            lectureId,
+            username: username || '',
+            downloadurl,
+            paymentVerified: true,
+            paymentDate: new Date()
+        });
+
+        // Update transaction status
+        await Transaction.updateOne(
+            { _id: transaction._id },
+            { 
+                status: 'completed',
+                metadata: {
+                    ...transaction.metadata,
+                    certificateId: certificate._id
+                }
+            }
+        );
+
+        // Send email with certificate
+        try {
+            const user = await User.findById(userId);
+            if (user && user.email) {
+                await sendEmail({
+                    to: user.email,
+                    subject: 'Your Certificate is Ready!',
+                    html: `
+                        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                            <h2 style="color: #2c3e50;">🎉 Certificate Ready!</h2>
+                            <p>Hello ${username || 'there'},</p>
+                            <p>Your certificate has been successfully generated and is ready for download.</p>
+                            <div style="text-align: center; margin: 30px 0;">
+                                <a href="${downloadUrl}" style="
+                                    display: inline-block;
+                                    padding: 12px 24px;
+                                    background-color: #4CAF50;
+                                    color: white;
+                                    text-decoration: none;
+                                    border-radius: 4px;
+                                    font-weight: bold;">
+                                    Download Certificate
+                                </a>
+                            </div>
+                            <p>If you have any questions, please contact our support team.</p>
+                            <p>Best regards,<br>MyTeacher Team</p>
+                        </div>
+                    `
+                });
+            }
+        } catch (emailError) {
+            console.error('Failed to send certificate email:', emailError);
+        }
+
+        // Redirect to success page
+        res.redirect(`${process.env.CLIENT_URL}/certificate/success?reference=${reference}`);
+
+    } catch (error) {
+        console.error('Certificate callback error:', error.response?.data || error.message);
+        
+        // Update transaction status to failed
+        await Transaction.updateOne(
+            { reference },
+            { 
+                status: 'failed',
+                error: error.response?.data?.message || error.message
+            }
+        );
+        
+        res.redirect(`${process.env.CLIENT_URL}/certificate/error?message=Payment verification failed`);
+    }
+});
+
 
 module.exports = router;
