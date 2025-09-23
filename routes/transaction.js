@@ -114,18 +114,18 @@ router.post('/pay/paystack', authJs, async (req, res) => {
     }
 
     // Check for existing enrollment within last 5 days
-    const fiveDaysAgo = new Date();
-    fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+    const tenDaysAgo = new Date();
+    tenDaysAgo.setDate(tenDaysAgo.getDate() - 10);
     
     const existingEnrollment = await Enrollment.findOne({
       userId,
-      courseId: courseId || courseName, // Use either ID or name for the check
-      enrolledAt: { $gte: fiveDaysAgo }
+      linkedLecture, // Use linkedLecture for the check
+      enrolledAt: { $gte: tenDaysAgo }
     });
 
     if (existingEnrollment) {
       return res.status(400).json({ 
-        message: 'You are already enrolled in this course within the last 5 days',
+        message: 'You are already enrolled in this lecture within the last 10 days',
         enrolledAt: existingEnrollment.enrolledAt
       });
     }
@@ -232,7 +232,7 @@ router.all('/paystack/callback', async (req, res) => {
     
     const existingEnrollment = await Enrollment.findOne({
       userId,
-      courseId,
+      linkedLecture: paymentData.metadata.linkedLecture, // Use linkedLecture for the check
       enrolledAt: { $gte: fiveDaysAgo }
     });
 
@@ -244,7 +244,7 @@ router.all('/paystack/callback', async (req, res) => {
       });
       
       return res.status(400).json({ 
-        message: 'You are already enrolled in this course within the last 5 days',
+        message: 'You are already enrolled in this lecture within the last 5 days',
         enrolledAt: existingEnrollment.enrolledAt,
         expiryDate: existingEnrollment.expiryDate
       });
@@ -267,6 +267,44 @@ router.all('/paystack/callback', async (req, res) => {
       expiryDate,
       linkedLecture: paymentData.metadata.linkedLecture // Store the linked lecture reference
     });
+
+    // Generate certificate if linkedLecture exists
+    if (paymentData.metadata.linkedLecture) {
+      try {
+        const { generateCertificate } = require('../utils/certificateGenerator');
+        const lecture = await Lecture.findById(paymentData.metadata.linkedLecture);
+        
+        if (lecture) {
+          // Generate and save certificate
+          const downloadurl = await generateCertificate(
+            (await User.findById(userId)).name,
+            course.course, // Using course name from the course object
+            paymentData.metadata.linkedLecture
+          );
+
+          // Save the single certificate record
+          const newCertificate = await SingleCrt.create({
+            userId: userId,
+            lectureId: paymentData.metadata.linkedLecture,
+            username: (await User.findById(userId)).name,
+            downloadurl: downloadurl
+          });
+
+          // Update or create MultipleCrt record
+          await MultipleCrt.findOneAndUpdate(
+            { userId: userId },
+            { 
+              $set: { username: (await User.findById(userId)).name },
+              $addToSet: { crtId: newCertificate._id }
+            },
+            { upsert: true, new: true }
+          );
+        }
+      } catch (certError) {
+        console.error('Error generating certificate:', certError);
+        // Continue even if certificate generation fails
+      }
+    }
 
     // Add user to all active lecture batches for this course
     const currentDate = new Date();

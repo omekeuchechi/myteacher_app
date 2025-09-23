@@ -8,17 +8,39 @@ const morgan = require('morgan');
 require('dotenv').config();
 const session = require('express-session');
 const passport = require('passport');
+const http = require('http');
+const { Server } = require('socket.io');
 require('./passport');
-// const http = require('http');
-// const server = http.createServer(app);
-// const io = require('socket.io')(server);
-// const WebRTCService = require('./services/webrtcService');
-// const webRTCService = new WebRTCService(io);
 
-// Increase limit for JSON parsing
+// Create HTTP server
+const server = http.createServer(app);
+
+// Initialize Socket.IO with CORS
+const io = new Server(server, {
+  cors: {
+    origin: 'https://myteacher.institute' /*'http://localhost:5173'*/,
+    credentials: true
+  }
+});
+
+// Initialize WebRTC Service
+const WebRTCService = require('./services/webrtcService');
+new WebRTCService(io, {
+  // Optional: set max participants per room
+  maxParticipants: 100, 
+  rateLimit: {
+    // 1 minute it is counting in milliseconds
+    windowMs: 60000,
+    // Max 100 events per minute per socket so that i can prevent rate limiting of bad intention  users
+    max: 100 
+  }
+});
+
+// +++++++++++++++ Increase limit for JSON parsing +++++++++++++++
 app.use(express.json({ limit: '1000mb' }));
 app.use(express.urlencoded({ limit: '1000mb', extended: true }));
 
+// +++++++++++++++ Session Configuration +++++++++++++++
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
@@ -28,13 +50,13 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
-// ----------------- CORS CONFIGURATION -----------------
+// +++++++++++++++ CORS Configuration +++++++++++++++
 app.use(cors({
   origin: 'https://myteacher.institute' /*'http://localhost:5173'*/,
   credentials: true
 }));
 
-// Logging incoming requests
+// +++++++++++++++ Logging incoming requests +++++++++++++++
 app.use((req, res, next) => {
   console.log('Incoming request:', {
     method: req.method,
@@ -44,12 +66,15 @@ app.use((req, res, next) => {
   next();
 });
 
+// +++++++++++++++ API URL +++++++++++++++
 const api = process.env.API_URL;
+
+// +++++++++++++++ Database Connection +++++++++++++++
 const CONNECT_DB = process.env.DATABASE_CONN;
 
 
 
-// Routers
+// +++++++++++++++ Routers +++++++++++++++
 const userRouter = require('./routes/user');
 const paymentRouter = require('./routes/payment');
 const postRouter = require('./routes/post');
@@ -71,12 +96,15 @@ const uploaderRouter = require('./routes/uploader');
 const upcomingLectureBatchRouter = require('./routes/upcomingLectureBatch');
 const onsiteAssetRoutes = require('./routes/onsite-asset');
 const onboardingRouter = require('./routes/onboarding');
+const courseRouter = require('./routes/course');
 
+
+// +++++++++++++++ Schedulers +++++++++++++++
 const { scheduleLectureUpdates } = require('./lib/lectureScheduler');
 const { scheduleAIGrading } = require('./lib/cronJob');
 const { scheduleLectureReminders } = require('./lib/lectureReminder');
 
-// Middleware
+// +++++++++++++++ Middleware +++++++++++++++
 app.use(bodyParser.json());
 app.use(morgan('tiny'));
 app.use(`/user`, userRouter);
@@ -100,13 +128,14 @@ app.use(`/post_files`, uploaderRouter);
 app.use(`/upcomingLectureBatch`, upcomingLectureBatchRouter);
 app.use(`/onsite-assets`, onsiteAssetRoutes);
 app.use(`/onboarding`, onboardingRouter);
+app.use(`/courses`, courseRouter);
 
-// Initialize schedulers
+// +++++++++++++++ Schedulers +++++++++++++++
 scheduleLectureUpdates();
 scheduleAIGrading();
 scheduleLectureReminders();
 
-// MongoDB connection
+// +++++++++++++++ MongoDB connection +++++++++++++++
 const mongoOptions = {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -148,9 +177,15 @@ mongoose.connection.on('disconnected', () => {
 
 connectWithRetry();
 
-// Start server
+// +++++++++++++++ Server +++++++++++++++
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(api);
-  console.log(`server is running at port ${PORT}`);
+  console.log(`Server is running on port ${PORT}`);
+  console.log(`WebSocket server is running on port ${PORT}`);
+});
+
+// +++++++++++++++ Error handling +++++++++++++++
+server.on('error', (error) => {
+  console.error('Server error:', error);
 });
