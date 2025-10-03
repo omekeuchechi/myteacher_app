@@ -97,6 +97,7 @@ const upcomingLectureBatchRouter = require('./routes/upcomingLectureBatch');
 const onsiteAssetRoutes = require('./routes/onsite-asset');
 const onboardingRouter = require('./routes/onboarding');
 const courseRouter = require('./routes/course');
+const instructorApplicationRouter = require('./routes/instructorApplication');
 
 
 // +++++++++++++++ Schedulers +++++++++++++++
@@ -129,6 +130,7 @@ app.use(`/upcomingLectureBatch`, upcomingLectureBatchRouter);
 app.use(`/onsite-assets`, onsiteAssetRoutes);
 app.use(`/onboarding`, onboardingRouter);
 app.use(`/courses`, courseRouter);
+app.use(`/instructor-applications`, instructorApplicationRouter);
 
 // +++++++++++++++ Schedulers +++++++++++++++
 scheduleLectureUpdates();
