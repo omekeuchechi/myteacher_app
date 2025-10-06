@@ -71,6 +71,8 @@ router.post('/create', authJs, async (req, res) => {
   }
 });
 
+
+
 // Get all videos
 router.get('/', authJs, async (req, res) => {
   try {
