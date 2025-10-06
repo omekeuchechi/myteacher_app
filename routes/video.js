@@ -2,37 +2,57 @@ const express = require('express');
 const router = express.Router();
 const Video = require('../models/video');
 const User = require('../models/user');
+const Lecture = require('../models/lecture');
 const authJs = require('../middlewares/auth');
 const pusher = require('../services/pusherService');
 
 // Middleware to parse JSON request bodies
 router.use(express.json());
 
-// Create a new video
+
+// Update the video creation route
 router.post('/create', authJs, async (req, res) => {
   try {
     const isAdmin = req.decoded && req.decoded.isAdmin;
     if (!isAdmin) {
       return res.status(403).json({ success: false, message: 'Unauthorized, admin only' });
     }
+    
     const { lecture, videoLink, description } = req.body;
     const createdBy = req.user?._id || req.user?.id || req.user;
+    
+    // First, verify the lecture exists and is not expired
+    const lectureExists = await Lecture.findById(lecture);
+    if (!lectureExists) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Lecture not found' 
+      });
+    }
+    
+    if (lectureExists.expiringDate <= new Date()) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Cannot add video to an expired lecture' 
+      });
+    }
+    
     const video = new Video({ lecture, videoLink, description, createdBy });
     await video.save();
     
-    // Populate the video with lecture and createdBy details for the real-time update
+    // Populate the video with lecture and createdBy details
     const populatedVideo = await Video.findById(video._id)
       .populate('lecture')
       .populate('createdBy');
       
-    // Trigger Pusher event with minimal data
+    // Trigger Pusher event
     const pusherPayload = {
       video: {
         _id: populatedVideo._id,
-        lecture: populatedVideo.lecture?._id || populatedVideo.lecture,
+        lecture: populatedVideo.lecture,
         videoLink: populatedVideo.videoLink,
         description: populatedVideo.description,
-        createdBy: populatedVideo.createdBy?._id || populatedVideo.createdBy,
+        createdBy: populatedVideo.createdBy,
         createdAt: populatedVideo.createdAt
       },
       message: 'New video has been added!'
@@ -43,7 +63,11 @@ router.post('/create', authJs, async (req, res) => {
     
     res.status(201).json({ success: true, video: populatedVideo });
   } catch (err) {
-    res.status(400).json({ success: false, message: err.message });
+    console.error('Error creating video:', err);
+    res.status(400).json({ 
+      success: false, 
+      message: err.message || 'Error creating video' 
+    });
   }
 });
 
@@ -51,16 +75,25 @@ router.post('/create', authJs, async (req, res) => {
 router.get('/', authJs, async (req, res) => {
   try {
     const userId = req.decoded && req.decoded.userId;
-    // const isAdmin = req.decoded && req.decoded.isAdmin;
     if (!userId) {
-      return res.status(403).json({ success: false, message: 'user not found' });
+      return res.status(403).json({ success: false, message: 'User not found' });
     }
-    const videos = await Video.find().populate('lecture').populate('createdBy');
-    // Don't trigger Pusher event for fetching all videos as it could be large
-    // Instead, let clients fetch the data via the API
+    
+    const videos = await Video.find({ lecture: { $ne: null } })  // Only include videos with a lecture
+      .populate({
+        path: 'lecture',
+        select: '_id title courseId startTime platform zoomLink topics'
+      })
+      .populate('createdBy', 'name email')
+      .sort({ createdAt: -1 });
+      
     res.status(200).json({ success: true, videos });
   } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
+    console.error('Error fetching videos:', err);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Error fetching videos' 
+    });
   }
 });
 
