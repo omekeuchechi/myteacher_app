@@ -22,6 +22,11 @@ const onboardingSchema = new mongoose.Schema({
       message: 'Please select a valid country code'
     }
   },
+  course: {
+    type: String,
+    required: [true, 'Course is required'],
+    trim: true
+  },
   phone: {
     type: String,
     required: [true, 'Phone number is required'],

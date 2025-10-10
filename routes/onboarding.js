@@ -25,7 +25,7 @@ const createAccountLimiter = rateLimit({
 // @access  Public
 router.post('/create', createAccountLimiter, async (req, res) => {
   try {
-    const { name, email, countryCode, phone } = req.body;
+    const { name, email, countryCode, phone, course } = req.body;
     
     // Check if user already exists with the same email or phone
     const existingUser = await Onboarding.findOne({
@@ -48,6 +48,7 @@ router.post('/create', createAccountLimiter, async (req, res) => {
       email: email.toLowerCase(),
       countryCode,
       phone,
+      course,
       metadata: {
         ipAddress: req.ip,
         userAgent: req.get('user-agent')
@@ -63,6 +64,7 @@ router.post('/create', createAccountLimiter, async (req, res) => {
         name: onboarding.name,
         email: onboarding.email,
         phone: `+${countryCode} ${phone}`,
+        course: onboarding.course,
         timestamp: new Date().toISOString()
       });
     } catch (pusherError) {
@@ -102,6 +104,12 @@ router.post('/create', createAccountLimiter, async (req, res) => {
                     <td style="padding: 8px 0; color: #666666; vertical-align: top;">Phone:</td>
                     <td style="padding: 8px 0; color: #333333;">
                       +${countryCode} ${phone}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; color: #666666; vertical-align: top;">Course:</td>
+                    <td style="padding: 8px 0; color: #333333;">
+                      ${course}
                     </td>
                   </tr>
                 </table>
@@ -149,6 +157,12 @@ router.post('/create', createAccountLimiter, async (req, res) => {
                     <td style="padding: 8px 0; color: #666666; vertical-align: top;">Phone:</td>
                     <td style="padding: 8px 0; color: #333333;">
                       +${countryCode} ${phone}
+                    </td>
+                  </tr>
+                  <tr>
+                    <td style="padding: 8px 0; color: #666666; vertical-align: top;">Course:</td>
+                    <td style="padding: 8px 0; color: #333333;">
+                      ${course}
                     </td>
                   </tr>
                 </table>
