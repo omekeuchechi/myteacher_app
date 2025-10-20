@@ -5,6 +5,7 @@ const authJs = require('../middlewares/auth');
 const InstructorApplication = require('../models/instructorApplication');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const sendEmail = require('../lib/sendEmail');
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -78,6 +79,38 @@ router.post('/create', handleFileUpload, async (req, res) => {
     }
 
     await application.save();
+    sendEmail({
+      to: email,
+      subject: 'Thank you for your application',
+      html: `
+            <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);">
+        <div style="text-align: center; margin-bottom: 30px;">
+            <img src="https://myteacher.institute/assets/Untitled-1-DN2sZebx.png" alt="MyTeacher App Logo" style="max-width: 200px; height: auto; margin-bottom: 20px;">
+            <h1 style="color: #2c3e50; margin-bottom: 25px; font-size: 28px;">Hi ${name},</h1>
+        </div>
+        
+        <div style="background-color: #f8f9fa; padding: 25px; border-radius: 8px; margin-bottom: 25px; line-height: 1.6; color: #495057;">
+            <p style="margin-bottom: 15px; font-size: 16px;">Thank you for submitting your application to become an instructor on MyTeacher App. We're excited to review your qualifications and experience.</p>
+            
+            <p style="margin-bottom: 15px; font-size: 16px;">Our team will carefully evaluate your application, and you can expect to hear back from us within 5-7 business days. We appreciate your patience during this process.</p>
+            
+            <p style="margin-bottom: 15px; font-size: 16px;">In the meantime, feel free to explore our platform and get familiar with our teaching resources and community guidelines.</p>
+        </div>
+        
+        <div style="text-align: center; color: #6c757d; font-size: 14px; border-top: 1px solid #e9ecef; padding-top: 20px;">
+            <p style="margin: 5px 0;">Best regards,</p>
+            <p style="margin: 5px 0; font-weight: 600; color: #2c3e50;">The MyTeacher App Team</p>
+            <p style="margin: 5px 0;">
+                <a href="https://myteacher.institute" style="color: #3498db; text-decoration: none;">Visit Our Website</a> | 
+                <a href="mailto:myteacheronlineclass1@gmail.com" style="color: #3498db; text-decoration: none; margin-left: 10px;">Contact Support</a>
+            </p>
+            <p style="margin: 15px 0 0; font-size: 12px; color: #adb5bd;">
+                © ${new Date().getFullYear()} MyTeacher Institute. All rights reserved.
+            </p>
+        </div>
+    </div>
+      `
+    });
 
     res.status(201).json({
       success: true,
@@ -229,6 +262,56 @@ router.patch('/:id/status', authJs, async (req, res) => {
       });
     }
 
+    if (status === 'accepted') {
+      // Send email notification to the applicant
+    sendEmail({
+      to: application.email,
+      subject: 'Congratulations! Your Instructor Application Has Been Accepted',
+      html: `
+        <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <img src="https://myteacher.institute/assets/Untitled-1-DN2sZebx.png" alt="MyTeacher App" style="max-width: 200px; height: auto; margin-bottom: 20px;">
+            <h1 style="color: #2c3e50; margin-bottom: 25px; font-size: 28px;">Hi ${application.name},</h1>
+          </div>
+          
+          <div style="background-color: #f8f9fa; padding: 25px; border-radius: 8px; margin-bottom: 25px; line-height: 1.6; color: #495057;">
+            <p style="margin-bottom: 15px; font-size: 16px;">🎉 <strong>Great news!</strong> Your application to become an instructor on MyTeacher App has been accepted. We're thrilled to welcome you to our team of talented educators!</p>
+
+            <div style="margin-bottom: 15px; font-size: 16px;">
+              <p style="margin-bottom: 15px; font-size: 16px;">Copy this passcode below and paste it in an iNput called "pass Code" to grant access to create your instructor account</p>
+              <p style="margin-bottom: 15px; font-size: 16px; color: blue;">${req.params.id}</p>
+            </div>
+            
+            <p style="margin-bottom: 15px; font-size: 16px;">To get started, please follow these simple steps:</p>
+            <ol style="margin-left: 20px; margin-bottom: 20px; padding-left: 15px;">
+              <li style="margin-bottom: 10px;">Visit <a href="https://myteacher.institute/instructorAuth" style="color: #3498db; text-decoration: none; font-weight: 500;">myteacher.institute/instructorAuth</a> to create your instructor account</li>
+              <li style="margin-bottom: 10px;">Complete your profile setup</li>
+              <li>Start creating and publishing your courses</li>
+            </ol>
+
+            <p style="margin-bottom: 15px; font-size: 16px;">If you already have an account, simply log in to access your instructor dashboard.</p>
+          </div>
+          
+          <div style="text-align: center; margin-bottom: 20px;">
+            <a href="https://myteacher.institute/login" style="display: inline-block; background-color: #3498db; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: 500; margin: 10px 0;">Go to Dashboard</a>
+          </div>
+
+          <div style="text-align: center; color: #6c757d; font-size: 14px; border-top: 1px solid #e9ecef; padding-top: 20px;">
+            <p style="margin: 5px 0;">Need help? We're here for you!</p>
+            <p style="margin: 5px 0; color: #2c3e50;">
+              <a href="mailto:myteacheronlineclass1@gmail.com" style="color: #3498db; text-decoration: none; margin: 0 10px;">Email Support</a>
+              <span>|</span>
+              <a href="https://myteacher.institute/help" style="color: #3498db; text-decoration: none; margin: 0 10px;">Help Center</a>
+            </p>
+            <p style="margin: 15px 0 0; font-size: 12px; color: #adb5bd;">
+              © ${new Date().getFullYear()} MyTeacher Institute. All rights reserved.
+            </p>
+          </div>
+        </div>
+      `
+    });
+    }
+
     res.json({
       success: true,
       message: 'Application status updated',
@@ -267,6 +350,34 @@ router.get('/:id/resume', async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to download resume',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+
+// for deleting
+router.delete('/deleteApplication/:id', authJs, async (req, res) => {
+  try {
+    const application = await InstructorApplication.findByIdAndDelete(req.params.id);
+    
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        message: 'Application not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Application deleted successfully',
+      data: application
+    });
+  } catch (error) {
+    console.error('Error deleting application:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete application',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }

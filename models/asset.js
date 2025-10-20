@@ -7,7 +7,7 @@ const assetSchema = new mongoose.Schema({
   webViewLink: String,
   webContentLink: String,
   uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-  lectureId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lecture' }, // Link asset to lecture/batch
+  lectureId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lecture' },
   createdAt: { type: Date, default: Date.now }
 });
 

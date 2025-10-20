@@ -7,6 +7,7 @@ const Enrollment = require('../models/enrollment');
 const User = require('../models/user');
 const Lecture = require('../models/lecture');
 const isSuperAdmin = require('../middlewares/isSuperAdmin');
+const isInstructor = require('../middlewares/isInstructor');
 const sendEmail = require('../lib/sendEmail');
 const { createZoomMeeting } = require('../lib/zoom');
 
@@ -139,16 +140,13 @@ router.patch('/logout/:lectureId', authJs, async (req, res) => {
 
 
 // Admin creates a lecture batch
-router.post('/create-lecture-batch', authJs, isSuperAdmin, async (req, res) => {
+router.post('/create-lecture-batch', authJs,  async (req, res) => {
   const isAdmin = req.decoded && req.decoded.isAdmin;
-  const isUserSuperAdmin = req.decoded.isSuperAdmin;
+
   if (!isAdmin) {
-    return res.status(403).json({ message: "Unauthorized, admin only" });
+    return res.status(403).json({ message: "Unauthorized, admin or instructor only" });
   }
 
-  if (!isUserSuperAdmin) {
-    return res.status(403).json({ message: "Unauthorized, super admin only" });
-  }
 
   try {
     const {
@@ -283,8 +281,13 @@ router.get('/lectures/:lectureId', authJs, async (req, res) => {
 });
 
 // Admin updates a lecture batch
-router.patch('/update-lecture/:lectureId', authJs, isSuperAdmin, async (req, res) => {
-  // Authorization checks (isAdmin, isSuperAdmin) are already handled by the middlewares
+router.patch('/update-lecture/:lectureId', authJs, async (req, res) => {
+  const isAdmin = req.decoded && req.decoded.isAdmin;
+
+  if (!isAdmin) {
+    return res.status(403).json({ message: "Unauthorized, admin only" });
+  }
+
   try {
     const { lectureId } = req.params;
     const updateData = req.body;

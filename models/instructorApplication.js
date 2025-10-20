@@ -56,7 +56,7 @@ const instructorApplicationSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'reviewed', 'accepted', 'rejected'],
+    enum: ['pending', 'reviewed', 'accepted', 'rejected','approved'],
     default: 'pending'
   },
   appliedAt: {

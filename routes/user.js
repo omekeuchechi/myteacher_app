@@ -10,6 +10,8 @@ const path = require('path');
 const axios = require('axios');
 const { pushDashboardStats } = require('./admin');
 const mime = require('mime-types');
+const Course = require('../models/course');
+const InstructorApplication = require('../models/instructorApplication');
 const Pusher = require('pusher');
 const pusher = new Pusher({
     appId: process.env.PUSHER_APP_ID,
@@ -119,6 +121,392 @@ router.post('/create', async (req, res) => {
             message: "Error creating user",
             error: err.message
         });
+    }
+});
+
+// instructor auth
+// Instructor Authentication
+router.post('/instructorAuth', async (req, res) => {
+    try {
+        const { passCode, password, termsAccepted } = req.body;
+        
+        // Input validation
+        if (!passCode) {
+            return res.status(400).json({ success: false, message: 'Passcode is required' });
+        }
+        if (!password) {
+            return res.status(400).json({ success: false, message: 'Password is required' });
+        }
+        if (!termsAccepted) {
+            return res.status(400).json({ success: false, message: 'Terms and conditions must be accepted' });
+        }
+
+        // Find application by passCode
+        const application = await InstructorApplication.findOne({ _id: passCode });
+        if (!application) {
+            return res.status(404).json({ success: false, message: 'Invalid passcode' });
+        }
+
+        // Check if user already exists
+        const existingUser = await User.findOne({ email: application.email });
+        if (existingUser) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Instructor account already exists. Please log in instead.' 
+            });
+        }
+
+        // Hash password and create JWT token
+        const hashedPassword = await bcrypt.hash(password, 12);
+        const token = jwt.sign({ 
+            email: application.email,
+            isInstructor: true,
+            userId: existingUser?._id 
+        }, process.env.TOKEN_SECRET_WORD, { expiresIn: '24h' });
+
+        // Find course by job position
+        const course = await Course.findOne({ course: application.jobPosition });
+
+        // Create new instructor user
+        const user = new User({ 
+            name: application.name, 
+            email: application.email, 
+            password: hashedPassword, 
+            verificationToken: null, 
+            isVerified: true, 
+            isAdmin: true, // Changed from true to false as instructors shouldn't be admins by default
+            isInstructor: true,
+            instructorCourses: course ? [course._id] : [],
+            termsAccepted: termsAccepted,
+            country: application.location?.country,
+            city: application.location?.city
+        });
+
+        const savedUser = await user.save();
+        await pushDashboardStats();
+
+        // Update application status
+        application.status = 'approved';
+        await application.save();
+
+        // Prepare response
+        const userResponse = {
+            _id: savedUser._id,
+            name: savedUser.name,
+            email: savedUser.email,
+            isInstructor: savedUser.isInstructor,
+            instructorCourses: savedUser.instructorCourses
+        };
+
+        
+        // Send welcome email
+
+    const welcomeEmailTemplate = (name) => `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Welcome to MyTeacher - Instructor Account Created</title>
+            <style>
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333333;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    padding: 20px;
+                    background-color: #f9f9f9;
+                }
+                .container {
+                    background-color: #ffffff;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+                    overflow: hidden;
+                }
+                .header {
+                    background-color: #4a6ee0;
+                    padding: 30px 20px;
+                    text-align: center;
+                    color: white;
+                }
+                .header h1 {
+                    margin: 0;
+                    font-size: 24px;
+                    font-weight: 600;
+                }
+                .content {
+                    padding: 30px;
+                }
+                .greeting {
+                    font-size: 18px;
+                    margin-bottom: 20px;
+                    color: #2d3748;
+                }
+                .message {
+                    margin-bottom: 25px;
+                    color: #4a5568;
+                }
+                .cta-button {
+                    display: inline-block;
+                    background-color: #4a6ee0;
+                    color: white !important;
+                    text-decoration: none;
+                    padding: 12px 24px;
+                    border-radius: 5px;
+                    font-weight: 600;
+                    margin: 15px 0;
+                }
+                .features {
+                    margin: 25px 0;
+                    padding: 0;
+                }
+                .feature {
+                    display: flex;
+                    align-items: flex-start;
+                    margin-bottom: 15px;
+                }
+                .feature-icon {
+                    color: #4a6ee0;
+                    margin-right: 12px;
+                    font-size: 20px;
+                }
+                .feature-text {
+                    flex: 1;
+                }
+                .footer {
+                    text-align: center;
+                    padding: 20px;
+                    font-size: 14px;
+                    color: #718096;
+                    border-top: 1px solid #e2e8f0;
+                    margin-top: 20px;
+                }
+                .logo {
+                    max-width: 180px;
+                    margin-bottom: 15px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1>Welcome to MyTeacher</h1>
+                    <p>Your Instructor Journey Begins Now!</p>
+                </div>
+                
+                <div class="content">
+                    <div class="greeting">Hello ${name},</div>
+                    
+                    <div class="message">
+                        <p>Congratulations! Your instructor account has been successfully created and you're now part of our growing community of educators.</p>
+                        <p>We're excited to have you on board and can't wait to see the knowledge you'll share with our students.</p>
+                    </div>
+
+                    <div style="text-align: center; margin: 30px 0;">
+                        <a href="https://myteacher.institute/instructor/dashboard" class="cta-button">Go to Your Dashboard</a>
+                    </div>
+
+                    <div class="features">
+                        <h3 style="margin-top: 30px; color: #2d3748;">Getting Started:</h3>
+                        
+                        <div class="feature">
+                            <div class="feature-icon">✓</div>
+                            <div class="feature-text">
+                                <strong>Complete Your Profile</strong>
+                                <p>Add your bio, profile picture, and teaching credentials to build trust with students.</p>
+                            </div>
+                        </div>
+                        
+                        <div class="feature">
+                            <div class="feature-icon">✓</div>
+                            <div class="feature-text">
+                                <strong>Create Your First Course</strong>
+                                <p>Start building your course content with our easy-to-use course creation tools.</p>
+                            </div>
+                        </div>
+                        
+                        <div class="feature">
+                            <div class="feature-icon">✓</div>
+                            <div class="feature-text">
+                                <strong>Set Your Schedule</strong>
+                                <p>Choose your availability and start accepting students for live sessions.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="background-color: #f7fafc; padding: 20px; border-radius: 6px; margin-top: 30px;">
+                        <h4 style="margin-top: 0; color: #2d3748;">Need Help?</h4>
+                        <p>Our support team is here to help you succeed. Feel free to reach out to us at <a href="myteacheronlineclass1@gmail.com" style="color: #4a6ee0; text-decoration: none;">myteacheronlineclass1@gmail.com</a> or visit our <a href="https://myteacher.institute/help" style="color: #4a6ee0; text-decoration: none;">Help Center</a>.</p>
+                    </div>
+                </div>
+                
+                <div class="footer">
+                    <p>© ${new Date().getFullYear()} MyTeacher Institute. All rights reserved.</p>
+                    <p>
+                        <a href="https://myteacher.institute" style="color: #4a6ee0; text-decoration: none; margin: 0 10px;">Website</a> | 
+                        <a href="https://myteacher.institute/privacy" style="color: #4a6ee0; text-decoration: none; margin: 0 10px;">Privacy Policy</a> | 
+                        <a href="https://myteacher.institute/terms" style="color: #4a6ee0; text-decoration: none; margin: 0 10px;">Terms of Service</a>
+                    </p>
+                    <p style="font-size: 12px; color: #a0aec0; margin-top: 20px;">
+                        You're receiving this email because you created an instructor account with MyTeacher.
+                        <br>
+                        <a href="#" style="color: #a0aec0; text-decoration: underline;">Unsubscribe</a> from these emails.
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+
+        await sendEmail({
+            to: savedUser.email,
+            subject: 'Welcome to MyTeacher as an Instructor!',
+            html: welcomeEmailTemplate(savedUser.name)
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: "Instructor account created successfully",
+            token,
+            user: userResponse
+        });
+
+    } catch (err) {
+        console.error('Error in instructor authentication:', err);
+        return res.status(500).json({
+            success: false,
+            message: "Error creating instructor account",
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+});
+
+// Update Instructor Profile
+router.put('/instructor/profile', authJs, async (req, res) => {
+    try {
+        const { name, email, password, currentPassword, instructorCourses, country, city } = req.body;
+        const userId = req.decoded?.userId;
+
+        if (!userId) {
+            return res.status(401).json({ success: false, message: 'Authentication required' });
+        }
+
+        const user = await User.findById(userId);
+        if (!user || !user.isInstructor) {
+            return res.status(403).json({ success: false, message: 'Instructor access required' });
+        }
+
+        // Update basic info
+        if (name) user.name = name;
+        if (email) user.email = email;
+        if (country) user.country = country;
+        if (city) user.city = city;
+
+        // Update password if current password is provided
+        if (password && currentPassword) {
+            const isMatch = await bcrypt.compare(currentPassword, user.password);
+            if (!isMatch) {
+                return res.status(400).json({ success: false, message: 'Current password is incorrect' });
+            }
+            user.password = await bcrypt.hash(password, 12);
+        }
+
+        // Update instructor courses if provided
+        if (instructorCourses && Array.isArray(instructorCourses)) {
+            // Verify all course IDs exist
+            const courses = await Course.find({ _id: { $in: instructorCourses } });
+            if (courses.length !== instructorCourses.length) {
+                return res.status(400).json({ 
+                    success: false, 
+                    message: 'One or more course IDs are invalid' 
+                });
+            }
+            user.instructorCourses = instructorCourses;
+        }
+
+        const updatedUser = await user.save();
+
+        // Prepare response
+        const userResponse = {
+            _id: updatedUser._id,
+            name: updatedUser.name,
+            email: updatedUser.email,
+            isInstructor: updatedUser.isInstructor,
+            instructorCourses: updatedUser.instructorCourses,
+            country: updatedUser.country,
+            city: updatedUser.city
+        };
+
+        return res.json({
+            success: true,
+            message: 'Profile updated successfully',
+            user: userResponse
+        });
+
+    } catch (err) {
+        console.error('Error updating instructor profile:', err);
+        return res.status(500).json({
+            success: false,
+            message: 'Error updating profile',
+            error: process.env.NODE_ENV === 'development' ? err.message : undefined
+        });
+    }
+});
+
+// Instructor Login route
+router.post('/instructor/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        
+        // Input validation
+        if (!email || !password) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Email and password are required' 
+            });
+        }
+
+        // Find user by email
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(401).json({ 
+                success: false, 
+                message: 'Invalid credentials' 
+            });
+        }
+
+        // Check if user is an instructor
+        if (!user.isInstructor) {
+            return res.status(403).json({ 
+                success: false, 
+                message: 'Access denied. Not an instructor account.' 
+            });
+        }
+
+        // Check instructor application status
+        const application = await InstructorApplication.findOne({ email: user.email });
+        if (!application || application.status !== 'approved') {
+            return res.status(403).json({ 
+                success: false,
+                message: 'Your instructor application is either pending or not approved' 
+            });
+        }
+
+        // Check if email is verified
+        if (!user.isVerified) {
+            return res.status(403).json({ message: 'Email not verified' });
+        }
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) {
+            return res.status(401).json({ success: false, message: 'Invalid credentials' });
+        }
+        const token = jwt.sign({ userId: user._id }, process.env.TOKEN_SECRET_WORD, { expiresIn: '30d' });
+        return res.json({ success: true, message: 'Login successful', token });
+    } catch (err) {
+        console.error('Error logging in:', err);
+        return res.status(500).json({ success: false, message: 'Error logging in', error: process.env.NODE_ENV === 'development' ? err.message : undefined });
     }
 });
 
@@ -286,7 +674,7 @@ router.post('/login', async (req, res) => {
                     isSuperAdmin: user.isSuperAdmin 
                 },
                 process.env.TOKEN_SECRET_WORD,
-                { expiresIn: '1d' }
+                { expiresIn: '30d' }
             );
 
             // Don't send sensitive information in the response

@@ -98,6 +98,8 @@ const onsiteAssetRoutes = require('./routes/onsite-asset');
 const onboardingRouter = require('./routes/onboarding');
 const courseRouter = require('./routes/course');
 const instructorApplicationRouter = require('./routes/instructorApplication');
+const { router: instructorRouter, refreshAllCounts } = require('./routes/instructor');
+refreshAllCounts();
 
 
 // +++++++++++++++ Schedulers +++++++++++++++
@@ -131,6 +133,7 @@ app.use(`/onsite-assets`, onsiteAssetRoutes);
 app.use(`/onboarding`, onboardingRouter);
 app.use(`/courses`, courseRouter);
 app.use(`/instructor-applications`, instructorApplicationRouter);
+app.use(`/instructor`, instructorRouter);
 
 // +++++++++++++++ Schedulers +++++++++++++++
 scheduleLectureUpdates();
