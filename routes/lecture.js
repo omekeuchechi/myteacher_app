@@ -158,6 +158,7 @@ router.post('/create-lecture-batch', authJs,  async (req, res) => {
       adminIds, // Expecting an array of admin User IDs
       jitsiPassword,
       isVerified,
+      days,
       verificationToken
     } = req.body;
 
@@ -215,6 +216,7 @@ router.post('/create-lecture-batch', authJs,  async (req, res) => {
       expiringDate,
       lecturesListed: adminIds,
       studentsEnrolled: studentIds,
+      days,
       createdBy: req.decoded.userId  // Track who created the batch
     });
 
@@ -243,6 +245,7 @@ router.post('/create-lecture-batch', authJs,  async (req, res) => {
               <p><strong>Total Students Enrolled:</strong> ${studentIds.length}</p>
               <p><strong>Assigned Admins:</strong> ${admins.map(a => a.name).join(', ')}</p>
               ${finalZoomLink ? `<p><strong>Join Link:</strong> <a href="${finalZoomLink}">Click here to join</a></p>` : ''}
+              <p><strong>Days:</strong> ${days.join(', ')}</p>
             </div>
           </div>
           

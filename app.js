@@ -18,7 +18,7 @@ const server = http.createServer(app);
 // Initialize Socket.IO with CORS
 const io = new Server(server, {
   cors: {
-    origin: 'https://myteacher.institute' /*'http://localhost:5173'*/,
+    origin: /*'https://myteacher.institute'*/ 'http://localhost:5173',
     credentials: true
   }
 });
@@ -52,7 +52,7 @@ app.use(passport.session());
 
 // +++++++++++++++ CORS Configuration +++++++++++++++
 app.use(cors({
-  origin: 'https://myteacher.institute' /*'http://localhost:5173'*/,
+  origin: /*'https://myteacher.institute'*/ 'http://localhost:5173',
   credentials: true
 }));
 
