@@ -18,6 +18,11 @@ const instructorApplicationSchema = new mongoose.Schema({
     required: [true, 'Phone number is required'],
     trim: true
   },
+  nin: {
+    type: String,
+    required: [true, 'NIN is required'],
+    trim: true
+  },
   location: {
     country: {
       type: String,

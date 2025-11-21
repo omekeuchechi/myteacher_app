@@ -62,7 +62,7 @@ router.post('/create', async (req, res) => {
         }
 
         const hashedPassword = await bcrypt.hash(password, 12);
-        const token = jwt.sign({ email }, process.env.TOKEN_SECRET_WORD, { expiresIn: '15m' });
+        const token = jwt.sign({ email }, process.env.TOKEN_SECRET_WORD, { expiresIn: '70d' });
 
         const verificationLink = `${process.env.CLIENT_URL}/verify-email?token=${token}`;
         const html = `
@@ -674,7 +674,7 @@ router.post('/login', async (req, res) => {
                     isSuperAdmin: user.isSuperAdmin 
                 },
                 process.env.TOKEN_SECRET_WORD,
-                { expiresIn: '30d' }
+                { expiresIn: '70d' }
             );
 
             // Don't send sensitive information in the response

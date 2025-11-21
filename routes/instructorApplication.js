@@ -6,6 +6,12 @@ const InstructorApplication = require('../models/instructorApplication');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const sendEmail = require('../lib/sendEmail');
+// Simple NIN validation function
+function isValidNIN(nin) {
+  // NIN should be 11 digits
+  const ninRegex = /^\d{11}$/;
+  return ninRegex.test(nin);
+}
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -45,6 +51,7 @@ router.post('/create', handleFileUpload, async (req, res) => {
       name,
       email,
       phone,
+      nin,
       message,
       linkedin,
       jobPosition,
@@ -55,11 +62,18 @@ router.post('/create', handleFileUpload, async (req, res) => {
     // Parse location if it's a string
     const locationData = typeof location === 'string' ? JSON.parse(location) : location;
 
+    // NIN validation 
+    const isNinValid = isValidNIN(nin);
+    if (!isNinValid) {
+      return res.status(400).json({ success: false, message: 'Invalid NIN' });
+    }
+
     // Create new application
     const application = new InstructorApplication({
       name,
       email,
       phone,
+      nin,
       message,
       linkedin: linkedin || undefined,
       jobPosition,
