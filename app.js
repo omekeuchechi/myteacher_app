@@ -9,6 +9,7 @@ require('dotenv').config();
 const session = require('express-session');
 const passport = require('passport');
 const http = require('http');
+const path = require('path');
 const { Server } = require('socket.io');
 require('./passport');
 
@@ -98,6 +99,7 @@ const onsiteAssetRoutes = require('./routes/onsite-asset');
 const onboardingRouter = require('./routes/onboarding');
 const courseRouter = require('./routes/course');
 const instructorApplicationRouter = require('./routes/instructorApplication');
+const privateTutorRoutes = require('./routes/privateTutor');
 const { router: instructorRouter, refreshAllCounts } = require('./routes/instructor');
 refreshAllCounts();
 
@@ -134,11 +136,16 @@ app.use(`/onboarding`, onboardingRouter);
 app.use(`/courses`, courseRouter);
 app.use(`/instructor-applications`, instructorApplicationRouter);
 app.use(`/instructor`, instructorRouter);
-
+app.use(`/private-tutor`, privateTutorRoutes);
 // +++++++++++++++ Schedulers +++++++++++++++
 scheduleLectureUpdates();
 scheduleAIGrading();
 scheduleLectureReminders();
+
+// +++++++++++++++ html file route ++++++++++++++++++
+app.get(`/tutor-request-success`, (req, res) => {
+  res.sendFile(path.join(__dirname, 'views', 'tutor-request-success.html'));
+});
 
 // +++++++++++++++ MongoDB connection +++++++++++++++
 const mongoOptions = {
