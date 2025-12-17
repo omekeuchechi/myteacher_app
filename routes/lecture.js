@@ -10,9 +10,10 @@ const isSuperAdmin = require('../middlewares/isSuperAdmin');
 const isInstructor = require('../middlewares/isInstructor');
 const sendEmail = require('../lib/sendEmail');
 const { createZoomMeeting } = require('../lib/zoom');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 
 // GET /api/v1/lecture/lectures
-router.get('/lectures', authJs, async (req, res) => {
+router.get('/lectures', authJs, cacheMiddleware(600, () => 'lectures:all'), async (req, res) => {
   try {
     const lectures = await Lecture.find().populate('lecturesListed studentsEnrolled');
     res.json({ lectures });
@@ -22,7 +23,7 @@ router.get('/lectures', authJs, async (req, res) => {
 });
 
 // GET /api/v1/lecture/admins
-router.get('/admins', authJs, async (req, res) => {
+router.get('/admins', authJs, cacheMiddleware(1800, () => 'users:admins'), async (req, res) => {
   try {
     const admins = await User.find({ isAdmin: true }, '_id name email');
     res.json({ admins });
@@ -36,7 +37,7 @@ router.get('/admins', authJs, async (req, res) => {
  * @desc    Fetch all non-expired lectures that the current user is enrolled in
  * @access  Protected (requires authJs middleware)
  */
-router.get('/userSpecificLecture', authJs, async (req, res) => {
+router.get('/userSpecificLecture', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     const userId = req.decoded.userId;
     if (!userId) {
@@ -132,6 +133,11 @@ router.patch('/logout/:lectureId', authJs, async (req, res) => {
       studentIds.splice(index, 1);
     }
     await lecture.save();
+    
+    // Invalidate cache after successful logout
+    await invalidateCache('lectures');
+    await invalidateCache('enrollments');
+    
     res.json({ message: "User logged out from lecture batch" });
   } catch (error) {
     res.status(500).json({ message: "Error logging out from lecture batch", error: error.message });
@@ -221,6 +227,10 @@ router.post('/create-lecture-batch', authJs,  async (req, res) => {
     });
 
     const savedLecture = await lecture.save();
+    
+    // Invalidate cache after successful lecture batch creation
+    await invalidateCache('lectures');
+    await invalidateCache('enrollments');
 
     // Get the admin who created this batch
     const creatingAdmin = await User.findById(req.decoded.userId);
@@ -271,7 +281,7 @@ router.post('/create-lecture-batch', authJs,  async (req, res) => {
 });
 
 // Fetch a specific lecture by ID
-router.get('/lectures/:lectureId', authJs, async (req, res) => {
+router.get('/lectures/:lectureId', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     const lecture = await Lecture.findById(req.params.lectureId).populate('lecturesListed studentsEnrolled');
     if (!lecture) {
@@ -327,7 +337,7 @@ router.patch('/update-lecture/:lectureId', authJs, async (req, res) => {
 });
 
 // GET route to get a meeting join URL (for students and assigned admins)
-router.get('/start-meeting/:lectureId', authJs, async (req, res) => {
+router.get('/start-meeting/:lectureId', authJs, cacheMiddleware(60), async (req, res) => {
   try {
     const { lectureId } = req.params;
     const lecture = await Lecture.findById(lectureId).populate('lecturesListed');
@@ -353,7 +363,7 @@ router.get('/start-meeting/:lectureId', authJs, async (req, res) => {
 });
 
 // Get all lectures for a specific user
-router.get('/user/:userId', authJs, async (req, res) => {
+router.get('/user/:userId', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     const { userId } = req.params;
     

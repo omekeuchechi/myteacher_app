@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const UpcomingLectureBatch = require('../models/upcomingLectureBatch');
 const authJs = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 const cloudinary = require('cloudinary').v2;
 const multer = require('multer');
 const mongoose = require('mongoose'); // mongoose is required for ObjectId validation
@@ -73,6 +74,9 @@ router.post('/create', authJs, upload.single('courseImage'), async (req, res) =>
     const newBatch = new UpcomingLectureBatch(batchData);
     await newBatch.save();
     
+    // Invalidate cache after successful batch creation
+    await invalidateCache('upcomingLectureBatches');
+    
     res.status(201).json(newBatch);
   } catch (error) {
     console.error('Error creating upcoming lecture batch:', error);
@@ -84,7 +88,7 @@ router.post('/create', authJs, upload.single('courseImage'), async (req, res) =>
 });
 
 // GET all upcoming lecture batches
-router.get('/', async (req, res) => {
+router.get('/', cacheMiddleware(300), async (req, res) => {
   try {
     const batches = await UpcomingLectureBatch.find().sort({ startTime: 1 });
     res.json(batches);
@@ -115,6 +119,9 @@ router.put('/:id', authJs, upload.single('courseImage'), async (req, res) => {
     if (!updatedBatch) {
       return res.status(404).json({ message: 'Batch not found' });
     }
+    
+    // Invalidate cache after successful batch update
+    await invalidateCache('upcomingLectureBatches');
 
     res.json(updatedBatch);
   } catch (error) {
@@ -156,6 +163,10 @@ router.delete('/:id', authJs, async (req, res) => {
     }
 
     await UpcomingLectureBatch.findByIdAndDelete(req.params.id);
+    
+    // Invalidate cache after successful batch deletion
+    await invalidateCache('upcomingLectureBatches');
+    
     res.json({ message: 'Batch deleted successfully' });
   } catch (error) {
     console.error('Error deleting batch:', error);
@@ -181,6 +192,9 @@ router.patch('/:id/book', authJs, async (req, res) => {
     // Add user to the booked list
     batch.booked.push(userId);
     await batch.save();
+    
+    // Invalidate cache after successful booking
+    await invalidateCache('upcomingLectureBatches');
 
     res.json(batch);
   } catch (error) {

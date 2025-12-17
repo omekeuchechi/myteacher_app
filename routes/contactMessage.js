@@ -3,6 +3,7 @@ const router = express.Router();
 const ContactMessage = require('../models/contactMessage');
 const authJs = require('../middlewares/auth');
 const isSuperAdmin = require('../middlewares/isSuperAdmin');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 const sendEmail = require('../lib/sendEmail');
 const User = require('../models/user');
 
@@ -73,6 +74,9 @@ router.post('/create', async (req, res) => {
             console.error('Failed to send thank you email:', emailError);
         }
         
+        // Invalidate cache after successful contact message creation
+        await invalidateCache('contactMessages');
+        
         res.json({ 
             success: true,
             message: "Contact message created",
@@ -89,7 +93,7 @@ router.post('/create', async (req, res) => {
 });
 
 // list all the contact messages
-router.get('/list', authJs, isSuperAdmin, async (req, res) => {
+router.get('/list', authJs, cacheMiddleware(300), async (req, res) => {
     try {
         const contactMessages = await ContactMessage.find();
         res.json({ contactMessages });
@@ -99,13 +103,17 @@ router.get('/list', authJs, isSuperAdmin, async (req, res) => {
 });
 
 // delete a contact message
-router.delete('/delete/:contactMessageId', authJs, isSuperAdmin, async (req, res) => {
+router.delete('/delete/:contactMessageId', authJs, async (req, res) => {
     try {
         const { contactMessageId } = req.params;
         const contactMessage = await ContactMessage.findByIdAndDelete(contactMessageId);
         if (!contactMessage) {
             return res.status(404).json({ message: "Contact message not found" });
         }
+        
+        // Invalidate cache after successful deletion
+        await invalidateCache('contactMessages');
+        
         res.json({ message: "Contact message deleted" });
     } catch (error) {
         res.status(500).json({ message: "Error deleting contact message", error: error.message });

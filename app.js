@@ -12,6 +12,7 @@ const http = require('http');
 const path = require('path');
 const { Server } = require('socket.io');
 require('./passport');
+const redisClient = require('./config/redis');
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -189,12 +190,24 @@ mongoose.connection.on('disconnected', () => {
 
 connectWithRetry();
 
+// Initialize Redis connection (optional)
+redisClient.connect().then(() => {
+  console.log('Redis connected successfully, caching enabled');
+}).catch(err => {
+  console.log('Redis not available, continuing without cache:', err.message);
+});
+
 // +++++++++++++++ Server +++++++++++++++
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(api);
   console.log(`Server is running on port ${PORT}`);
   console.log(`WebSocket server is running on port ${PORT}`);
+  
+  // Wait a moment for Redis to fully connect before checking status
+  setTimeout(() => {
+    console.log(`Redis Status: ${redisClient.isRedisConnected() ? 'Connected' : 'Not Available (caching disabled)'}`);
+  }, 1000);
 });
 
 // +++++++++++++++ Error handling +++++++++++++++

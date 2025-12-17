@@ -4,6 +4,7 @@ const Video = require('../models/video');
 const User = require('../models/user');
 const Lecture = require('../models/lecture');
 const authJs = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 const pusher = require('../services/pusherService');
 
 // Middleware to parse JSON request bodies
@@ -40,6 +41,9 @@ router.post('/create', authJs, async (req, res) => {
     const video = new Video({ lecture, videoLink, description, createdBy });
     await video.save();
     
+    // Invalidate cache after successful video creation
+    await invalidateCache('videos');
+    
     // Populate the video with lecture and createdBy details
     const populatedVideo = await Video.findById(video._id)
       .populate('lecture')
@@ -74,7 +78,7 @@ router.post('/create', authJs, async (req, res) => {
 
 
 // Get all videos
-router.get('/', authJs, async (req, res) => {
+router.get('/', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     const userId = req.decoded && req.decoded.userId;
     if (!userId) {
@@ -113,6 +117,10 @@ router.patch('/:id', authJs, async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
+    
+    // Invalidate cache after successful video update
+    await invalidateCache('videos');
+    
     // Trigger update with minimal data
     const updatePayload = {
       video: {
@@ -139,6 +147,10 @@ router.delete('/:id', authJs, async (req, res) => {
     }
     const video = await Video.findByIdAndDelete(req.params.id);
     if (!video) return res.status(404).json({ success: false, message: 'Video not found' });
+    
+    // Invalidate cache after successful video deletion
+    await invalidateCache('videos');
+    
     // Only send the video ID for delete events
     pusher.trigger('video', 'deleted', { videoId: video._id })
       .catch(error => console.error('Pusher error:', error));
@@ -159,6 +171,10 @@ router.post('/:id/comment', authJs, async (req, res) => {
     const comment = { user, text, createdAt: new Date(), edited: false };
     video.comment.push(comment);
     await video.save();
+    
+    // Invalidate cache after successful comment creation
+    await invalidateCache('videos');
+    
     // Trigger comment created with minimal data
     const commentPayload = {
       videoId: video._id,
@@ -192,6 +208,10 @@ router.post('/:id/reply', authJs, async (req, res) => {
     const reply = { commentId, user, text, createdAt: new Date(), edited: false };
     video.replyComment.push(reply);
     await video.save();
+    
+    // Invalidate cache after successful reply creation
+    await invalidateCache('videos');
+    
     // Trigger reply created with minimal data
     const replyPayload = {
       videoId: video._id,
@@ -226,6 +246,10 @@ router.patch('/:videoId/comment/:commentId', authJs, async (req, res) => {
     comment.text = text;
     comment.edited = true;
     await video.save();
+    
+    // Invalidate cache after successful comment edit
+    await invalidateCache('videos');
+    
     // Trigger comment edited with minimal data
     pusher.trigger('video', 'comment_edited', { 
       videoId: video._id, 
@@ -253,6 +277,10 @@ router.patch('/:videoId/reply/:replyId', authJs, async (req, res) => {
     reply.text = text;
     reply.edited = true;
     await video.save();
+    
+    // Invalidate cache after successful reply edit
+    await invalidateCache('videos');
+    
     // Trigger reply edited with minimal data
     pusher.trigger('video', 'reply_edited', { 
       videoId: video._id, 
@@ -267,7 +295,7 @@ router.patch('/:videoId/reply/:replyId', authJs, async (req, res) => {
 });
 
 // Get multiple users by their IDs
-router.get('/users', authJs, async (req, res) => {
+router.get('/users', authJs, cacheMiddleware(600), async (req, res) => {
   try {
     const { ids } = req.query;
     if (!ids) {
@@ -284,7 +312,7 @@ router.get('/users', authJs, async (req, res) => {
 });
 
 // Get a single user by ID
-router.get('/user/:userId', authJs, async (req, res) => {
+router.get('/user/:userId', authJs, cacheMiddleware(600), async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) {

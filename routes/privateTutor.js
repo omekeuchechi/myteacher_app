@@ -3,6 +3,7 @@ const router = express.Router();
 const RequestPrivateTutor = require('../models/reqPrivateTutor');
 const sendEmail = require('../lib/sendEmail');
 const authJs = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 
 // POST route to create a new private tutor request
 router.post('/request', async (req, res) => {
@@ -28,6 +29,9 @@ router.post('/request', async (req, res) => {
 
         // Save to database
         const savedRequest = await tutorRequest.save();
+        
+        // Invalidate cache after successful tutor request creation
+        await invalidateCache('tutorRequests');
 
         // Send email notification
         const emailHtml = `
@@ -303,6 +307,9 @@ router.delete('/request/:id', authJs, async (req, res) => {
                 message: 'Tutor request not found'
             });
         }
+        
+        // Invalidate cache after successful tutor request deletion
+        await invalidateCache('tutorRequests');
 
         return res.status(200).json({
             success: true,
@@ -321,7 +328,7 @@ router.delete('/request/:id', authJs, async (req, res) => {
 });
 
 // GET route to retrieve all tutor requests (admin only)
-router.get('/requests', authJs, async (req, res) => {
+router.get('/requests', authJs, cacheMiddleware(300), async (req, res) => {
     try {
         const requests = await RequestPrivateTutor.find().sort({ createdAt: -1 });
         

@@ -4,6 +4,7 @@ const User = require('../models/user');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const authJs = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 const passport = require('passport');
 const sendEmail = require('../lib/sendEmail');
 const path = require('path');
@@ -103,6 +104,9 @@ router.post('/create', async (req, res) => {
         const user = new User({ name, email, password: hashedPassword, verificationToken: token, isVerified: false });
         const response = await user.save();
         await pushDashboardStats();
+        
+        // Invalidate cache after successful user creation
+        await invalidateCache('users');
 
         const viewResponse = {
             _id: response._id,
@@ -426,6 +430,9 @@ router.put('/instructor/profile', authJs, async (req, res) => {
         }
 
         const updatedUser = await user.save();
+        
+        // Invalidate cache after successful user profile update
+        await invalidateCache('users');
 
         // Prepare response
         const userResponse = {
@@ -511,7 +518,7 @@ router.post('/instructor/login', async (req, res) => {
 });
 
 // Email verification route
-router.get('/verify-email', async (req, res) => {
+router.get('/verify-email', cacheMiddleware(300), async (req, res) => {
     try {
         const { token } = req.query;
         if (!token) {
@@ -698,7 +705,7 @@ router.post('/login', async (req, res) => {
 });
 
 // Get all users (admin only)
-router.get('/', authJs, async (req, res) => {
+router.get('/', authJs, cacheMiddleware(300), async (req, res) => {
     const isAdmin = req.decoded && req.decoded.isAdmin;
 
     if (!isAdmin) {
@@ -767,6 +774,10 @@ router.patch('/profile', authJs, async (req, res) => {
     try {
         const response = await user.save();
         await pushDashboardStats();
+        
+        // Invalidate cache after successful user profile update
+        await invalidateCache('users');
+        
         // Pusher event: user profile updated
         pusher.trigger('user', 'profile_updated', { user: response });
         return res.status(200).json({ message: "User profile updated successfully", user: response });
@@ -933,7 +944,7 @@ router.patch('/update-user-course', authJs, async (req, res) => {
     }
 });
 
-router.get('/me', authJs, async (req, res) => {
+router.get('/me', authJs, cacheMiddleware(600), async (req, res) => {
     res.set('Cache-Control', 'no-store');
     try {
         const userId = req.decoded && req.decoded.userId;

@@ -5,6 +5,7 @@ const Certificate = require('../models/certificate');
 const User = require('../models/user');
 const sendEmail = require('../lib/sendEmail');
 const pusher = require('./pusherService');
+const redisClient = require('../config/redis');
 
 class CertificateService {
     static calculateGrade(score) {
@@ -15,7 +16,7 @@ class CertificateService {
         if (score >= 50) return 'C (Satisfactory)';
         return 'D (Pass)';
     }
-    
+
     static generateCertificateId(userId, lectureId) {
         // Create a simple unique ID based on user ID, lecture ID, and timestamp
         const timestamp = Date.now().toString(36);
@@ -26,11 +27,11 @@ class CertificateService {
         const pdfDoc = await PDFDocument.create();
         const page = pdfDoc.addPage([800, 600]);
         const { width, height } = page.getSize();
-        
+
         // Load fonts
         const titleFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
         const textFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
-        
+
         // Helper function to draw centered text
         const drawCenteredText = (text, y, size, isBold = false) => {
             const font = isBold ? titleFont : textFont;
@@ -43,7 +44,7 @@ class CertificateService {
                 color: rgb(0, 0, 0),
             });
         };
-        
+
         // Add certificate border
         const borderPadding = 40;
         page.drawRectangle({
@@ -54,22 +55,22 @@ class CertificateService {
             borderColor: rgb(0.1, 0.1, 0.1),
             borderWidth: 2,
         });
-        
+
         // Add header
         drawCenteredText('CERTIFICATE OF ACHIEVEMENT', height - 100, 28, true);
-        
+
         // Add main content
         drawCenteredText('This is to certify that', height - 180, 16);
         drawCenteredText(user.name.toUpperCase(), height - 220, 24, true);
         drawCenteredText('has successfully completed the course', height - 260, 16);
-        
+
         // Handle different lecture data structures
         let lectureTitle = 'the course';
         if (lecture) {
             lectureTitle = lecture.title || lecture.name || 'the course';
         }
         drawCenteredText(`"${lectureTitle}"`, height - 290, 18, true);
-        
+
         // Debug log for lecture data
         console.log('Certificate generation - Lecture data:', {
             lectureId: lecture?._id,
@@ -77,11 +78,11 @@ class CertificateService {
             name: lecture?.name,
             finalTitle: lectureTitle
         });
-        
+
         // Add score and grade
         const grade = this.calculateGrade(score);
         drawCenteredText(`With an overall score of: ${score}% (${grade})`, height - 350, 16);
-        
+
         // Add completion date
         const date = new Date().toLocaleDateString('en-US', {
             year: 'numeric',
@@ -89,24 +90,43 @@ class CertificateService {
             day: 'numeric'
         });
         drawCenteredText(`Awarded on: ${date}`, height - 400, 14);
-        
+
         // Add verification line
         drawCenteredText('Certificate ID: ' + this.generateCertificateId(user._id, lecture._id), 80, 12);
-        
+
         return await pdfDoc.save();
     }
-    
+
     static async checkAndIssueCertificates() {
         console.log('Checking for users eligible for certificates...');
-        
+
+        // Try to get cached certificates data first
+        const cacheKey = 'certificates:eligible';
+        try {
+            const cachedData = await redisClient.get(cacheKey);
+            if (cachedData) {
+                console.log('Using cached certificates data');
+                const parsedData = JSON.parse(cachedData);
+                if (parsedData.length === 0) {
+                    console.log('No eligible certificates found in cache');
+                    return;
+                }
+                // Process cached data
+                await this.processEligibleCertificates(parsedData);
+                return;
+            }
+        } catch (cacheError) {
+            console.warn('Cache error, proceeding with database query:', cacheError.message);
+        }
+
         // Find all certificates with at least 3 graded assignments
         const certificates = await Certificate.aggregate([
             { $unwind: "$certScores" },
-            { 
-                $match: { 
+            {
+                $match: {
                     'certScores.assignmentsGraded': { $gte: 3 },
                     'certScores.certificateIssued': { $ne: true }
-                } 
+                }
             },
             // Get the full certificate document to use our instance methods
             {
@@ -144,9 +164,22 @@ class CertificateService {
             { $replaceRoot: { newRoot: "$populatedCert" } }
         ]);
 
+        // Cache the results for 1 hour (3600 seconds)
+        try {
+            await redisClient.set(cacheKey, JSON.stringify(certificates), 3600);
+            console.log('Cached certificates data for 1 hour');
+        } catch (cacheError) {
+            console.warn('Failed to cache certificates data:', cacheError.message);
+        }
+
+        // Process eligible certificates
+        await this.processEligibleCertificates(certificates);
+    }
+
+    static async processEligibleCertificates(certificates) {
         // Process each certificate that might be eligible
         const eligibleCertificates = [];
-        
+
         for (const cert of certificates) {
             const certificateDoc = new Certificate(cert);
             for (const score of cert.certScores) {
@@ -159,7 +192,7 @@ class CertificateService {
                 }
             }
         }
-        
+
         // Now get the full lecture details for eligible certificates
         const result = await Certificate.populate(eligibleCertificates, [
             {
@@ -173,38 +206,38 @@ class CertificateService {
                 select: 'name description'
             }
         ]);
-        
+
         // Process each eligible certificate
         for (const item of result) {
             try {
                 const { certificate, lectureId: lecture, score } = item;
                 const user = certificate?.user;
-                
+
                 if (!user || !lecture) {
                     console.error('Missing user or lecture data for certificate:', item);
                     continue;
                 }
-                
+
                 // Generate certificate
                 const pdfBytes = await this.generateCertificate(user, lecture, score);
-                
+
                 // Generate certificate filename
                 const certFileName = `Certificate_${(lecture?.name || 'Course').toString().replace(/[^\w\s]/gi, '').replace(/\s+/g, '_')}.pdf`;
                 const certificateUrl = `${`${process.env.CLIENT_URL}/certificates/${certificate._id}`}`;
-                
+
                 // Validate email address
                 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                 const isValidEmail = user?.email && emailRegex.test(user.email);
-                
+
                 if (!isValidEmail) {
                     console.error(`❌ Invalid or missing email for user ${user._id}: ${user.email}`);
                     throw new Error(`Invalid or missing email address for user ${user._id}`);
                 }
-                
+
                 console.log(`📧 Preparing to send certificate email to: ${user.email}`);
                 console.log(`📄 Certificate filename: ${certFileName}`);
                 console.log(`🔗 Certificate URL: ${certificateUrl}`);
-                
+
                 // Prepare email content
                 const emailSubject = `🎉 Certificate of Completion - ${lecture?.name || 'Your Course'}`;
                 const emailHtml = `
@@ -254,7 +287,7 @@ class CertificateService {
                     console.error(`❌ Failed to send email to ${user.email}:`, emailError.message);
                     throw emailError; // Re-throw to be caught by the outer try-catch
                 }
-                
+
                 // Send real-time notification via Pusher
                 try {
                     await pusher.trigger(
@@ -273,23 +306,30 @@ class CertificateService {
                 } catch (pusherError) {
                     console.error('Error sending Pusher notification:', pusherError);
                 }
-                
+
                 // Find the specific cert score to update
                 const certScoreIndex = certificate.certScores.findIndex(
                     cs => cs.lecture?.toString() === lecture?._id?.toString()
                 );
-                
+
                 if (certScoreIndex !== -1) {
                     // Create a dynamic update path using the index
                     const updatePath = `certScores.${certScoreIndex}.certificateIssued`;
-                    
+
                     // Mark certificate as issued
                     await Certificate.findByIdAndUpdate(
                         certificate._id,
                         { $set: { [updatePath]: true } }
                     );
-                    
+
                     console.log(`✅ Certificate issued and sent to ${user.email} for ${lecture?.name || 'the course'}`);
+                    // Invalidate cache after certificate issuance
+                    try {
+                        await redisClient.del('certificates:eligible');
+                        console.log('Cache invalidated after certificate issuance');
+                    } catch (cacheError) {
+                        console.warn('Failed to invalidate cache:', cacheError.message);
+                    }
                 } else {
                     console.error(`❌ Could not find matching cert score for user ${user?._id || 'unknown'} and lecture ${lecture?._id || 'unknown'}`);
                 }
@@ -301,7 +341,7 @@ class CertificateService {
 
     static async generateCertificatePDF({ userName, userEmail, score, issueDate, certificateId }) {
         const PDFDocument = require('pdfkit');
-        
+
         return new Promise((resolve, reject) => {
             try {
                 const doc = new PDFDocument({
@@ -319,166 +359,166 @@ class CertificateService {
 
                 // Add content to the PDF
                 doc.rect(0, 0, doc.page.width, doc.page.height).fill('#f8f9fa');
-                
+
                 // Add ornate border
                 const borderPadding = 30;
                 const borderWidth = 2;
                 const cornerLength = 50;
-                
+
                 // Outer border
                 doc.roundedRect(
-                    borderPadding, 
-                    borderPadding, 
-                    doc.page.width - (borderPadding * 2), 
+                    borderPadding,
+                    borderPadding,
+                    doc.page.width - (borderPadding * 2),
                     doc.page.height - (borderPadding * 2),
                     10
                 )
-                .lineWidth(borderWidth)
-                .stroke('#4a6da7');
-                
+                    .lineWidth(borderWidth)
+                    .stroke('#4a6da7');
+
                 // Inner border
                 const innerPadding = 10;
                 doc.roundedRect(
-                    borderPadding + innerPadding, 
-                    borderPadding + innerPadding, 
-                    doc.page.width - ((borderPadding + innerPadding) * 2), 
+                    borderPadding + innerPadding,
+                    borderPadding + innerPadding,
+                    doc.page.width - ((borderPadding + innerPadding) * 2),
                     doc.page.height - ((borderPadding + innerPadding) * 2),
                     5
                 )
-                .lineWidth(1)
-                .stroke('#4a6da7');
-                
+                    .lineWidth(1)
+                    .stroke('#4a6da7');
+
                 // Add corner decorations
                 const cornerStyle = (x, y, size) => {
                     doc.moveTo(x, y)
-                       .lineTo(x + size, y)
-                       .lineTo(x, y + size)
-                       .lineTo(x, y)
-                       .fill('#4a6da7');
+                        .lineTo(x + size, y)
+                        .lineTo(x, y + size)
+                        .lineTo(x, y)
+                        .fill('#4a6da7');
                 };
-                
+
                 // Draw corners (top-left, top-right, bottom-left, bottom-right)
                 const cornerSize = 15;
                 const cornerOffset = borderPadding + 10;
-                
+
                 // Top-left corner
                 cornerStyle(cornerOffset, cornerOffset, cornerSize);
                 // Top-right corner
                 doc.save()
-                   .translate(doc.page.width - cornerOffset, cornerOffset)
-                   .rotate(90)
-                   .path('M 0,0 L 15,0 L 0,15 Z')
-                   .fill('#4a6da7')
-                   .restore();
+                    .translate(doc.page.width - cornerOffset, cornerOffset)
+                    .rotate(90)
+                    .path('M 0,0 L 15,0 L 0,15 Z')
+                    .fill('#4a6da7')
+                    .restore();
                 // Bottom-left corner
                 doc.save()
-                   .translate(cornerOffset, doc.page.height - cornerOffset)
-                   .rotate(270)
-                   .path('M 0,0 L 15,0 L 0,15 Z')
-                   .fill('#4a6da7')
-                   .restore();
+                    .translate(cornerOffset, doc.page.height - cornerOffset)
+                    .rotate(270)
+                    .path('M 0,0 L 15,0 L 0,15 Z')
+                    .fill('#4a6da7')
+                    .restore();
                 // Bottom-right corner
                 doc.save()
-                   .translate(doc.page.width - cornerOffset, doc.page.height - cornerOffset)
-                   .rotate(180)
-                   .path('M 0,0 L 15,0 L 0,15 Z')
-                   .fill('#4a6da7')
-                   .restore();
-                
+                    .translate(doc.page.width - cornerOffset, doc.page.height - cornerOffset)
+                    .rotate(180)
+                    .path('M 0,0 L 15,0 L 0,15 Z')
+                    .fill('#4a6da7')
+                    .restore();
+
                 // Add a subtle watermark
                 doc.opacity(0.05)
-                   .fontSize(120)
-                   .font('Helvetica-Bold')
-                   .text('MY TEACHER', {
-                       align: 'center',
-                       verticalAlign: 'center',
-                       width: doc.page.width,
-                       height: doc.page.height
-                   })
-                   .opacity(1);
-                
+                    .fontSize(120)
+                    .font('Helvetica-Bold')
+                    .text('MY TEACHER', {
+                        align: 'center',
+                        verticalAlign: 'center',
+                        width: doc.page.width,
+                        height: doc.page.height
+                    })
+                    .opacity(1);
+
                 // Header
                 doc.fillColor('#2c3e50')
-                   .fontSize(36)
-                   .font('Helvetica-Bold')
-                   .text('CERTIFICATE OF COMPLETION', {
-                       align: 'center',
-                       lineGap: 10
-                   });
-                
+                    .fontSize(36)
+                    .font('Helvetica-Bold')
+                    .text('CERTIFICATE OF COMPLETION', {
+                        align: 'center',
+                        lineGap: 10
+                    });
+
                 // Add a decorative line under the title
                 doc.strokeColor('#4a6da7')
-                   .lineWidth(1)
-                   .moveTo(doc.page.width / 2 - 100, 150)
-                   .lineTo(doc.page.width / 2 + 100, 150)
-                   .stroke();
-                
+                    .lineWidth(1)
+                    .moveTo(doc.page.width / 2 - 100, 150)
+                    .lineTo(doc.page.width / 2 + 100, 150)
+                    .stroke();
+
                 // Add small decorative elements on the sides
                 doc.fillColor('#4a6da7')
-                   .circle(doc.page.width / 2 - 120, 150, 3)
-                   .fill()
-                   .circle(doc.page.width / 2 + 120, 150, 3)
-                   .fill();
+                    .circle(doc.page.width / 2 - 120, 150, 3)
+                    .fill()
+                    .circle(doc.page.width / 2 + 120, 150, 3)
+                    .fill();
 
                 // Body
                 doc.moveDown(2);
                 doc.fontSize(18)
-                   .text('This is to certify that', { align: 'center' });
-                
+                    .text('This is to certify that', { align: 'center' });
+
                 doc.moveDown(1);
                 doc.font('Helvetica-Bold')
-                   .fontSize(28)
-                   .text(userName, { align: 'center' });
-                
+                    .fontSize(28)
+                    .text(userName, { align: 'center' });
+
                 doc.moveDown(1);
                 doc.font('Helvetica')
-                   .fontSize(16)
-                   .text('has successfully completed the course with a total score of', { align: 'center' });
-                
+                    .fontSize(16)
+                    .text('has successfully completed the course with a total score of', { align: 'center' });
+
                 doc.moveDown(1);
                 doc.font('Helvetica-Bold')
-                   .fontSize(36)
-                   .text(`${score.toFixed(2)}%`, { align: 'center' });
-                
+                    .fontSize(36)
+                    .text(`${score.toFixed(2)}%`, { align: 'center' });
+
                 // Add a decorative element before the footer
                 doc.fillColor('#4a6da7')
-                   .rect(doc.page.width / 2 - 75, doc.page.height - 180, 150, 4)
-                   .fill();
-                
+                    .rect(doc.page.width / 2 - 75, doc.page.height - 180, 150, 4)
+                    .fill();
+
                 // Footer
                 doc.moveDown(1);
                 doc.fontSize(12)
-                   .fillColor('#2c3e50')
-                   .text(`Certificate ID: ${certificateId}`, 50, doc.page.height - 160);
-                
+                    .fillColor('#2c3e50')
+                    .text(`Certificate ID: ${certificateId}`, 50, doc.page.height - 160);
+
                 doc.fontSize(12)
-                   .text(`Issued on: ${issueDate.toLocaleDateString()}`, 50, doc.page.height - 140);
-                
+                    .text(`Issued on: ${issueDate.toLocaleDateString()}`, 50, doc.page.height - 140);
+
                 // Add signature line
                 doc.moveTo(50, doc.page.height - 100)
-                   .lineTo(250, doc.page.height - 100)
-                   .stroke('#4a6da7');
-                
+                    .lineTo(250, doc.page.height - 100)
+                    .stroke('#4a6da7');
+
                 doc.fontSize(10)
-                   .text('Authorized Signature', 50, doc.page.height - 90);
-                
+                    .text('Authorized Signature', 50, doc.page.height - 90);
+
                 // Add company info
                 doc.fontSize(10)
-                   .fillColor('#2c3e50')
-                   .text('MyTeacher App', 
-                       doc.page.width - 250, doc.page.height - 120, {
-                           width: 200,
-                           align: 'right',
-                           lineGap: 5
-                       })
-                   .font('Helvetica')
-                   .fontSize(8)
-                   .text('Official Certification', 
-                       doc.page.width - 250, null, {
-                           width: 200,
-                           align: 'right',
-                           lineGap: 5
-                       });
+                    .fillColor('#2c3e50')
+                    .text('MyTeacher App',
+                        doc.page.width - 250, doc.page.height - 120, {
+                        width: 200,
+                        align: 'right',
+                        lineGap: 5
+                    })
+                    .font('Helvetica')
+                    .fontSize(8)
+                    .text('Official Certification',
+                        doc.page.width - 250, null, {
+                        width: 200,
+                        align: 'right',
+                        lineGap: 5
+                    });
 
                 doc.end();
             } catch (error) {

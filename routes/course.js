@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Course = require('../models/course');
 const auth = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 
 // Get course by ID
-router.get('/:id', auth, async (req, res) => {
+router.get('/:id', auth, cacheMiddleware(1800, (req) => `course:${req.params.id}`), async (req, res) => {
   console.log(`Fetching course with ID: ${req.params.id}`);
   try {
     if (!req.params.id.match(/^[0-9a-fA-F]{24}$/)) {
@@ -42,7 +43,7 @@ router.get('/:id', auth, async (req, res) => {
 });
 
 // Search courses by name or get all courses
-router.get('/', auth, async (req, res) => {
+router.get('/', auth, cacheMiddleware(900, (req) => `courses:list:${JSON.stringify(req.query)}`), async (req, res) => {
   console.log('Fetching courses with query:', req.query);
   
   try {

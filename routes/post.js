@@ -6,6 +6,7 @@ const { Worker } = require('worker_threads');
 const path = require('path');
 const Pusher = require('pusher');
 const authJs = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 const Post = require('../models/post');
 const User = require('../models/user');
 const NodeCache = require('node-cache');
@@ -78,7 +79,7 @@ const validatePostInput = (req, res, next) => {
 };
 
 // Get all posts with pagination and filtering
-router.get('/', async (req, res) => {
+router.get('/', cacheMiddleware(300), async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
@@ -221,7 +222,7 @@ router.post('/create', authJs, async (req, res) => {
 });
 
 // Get all posts with pagination and caching
-router.get('/', authJs, async (req, res) => {
+router.get('/', authJs, cacheMiddleware(300), async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const skip = (page - 1) * limit;
@@ -296,6 +297,12 @@ const updateLikeStatus = async (postId, userId, action) => {
 
   await post.save();
   
+  // Invalidate cache after like/unlike operations
+  postCache.keys().forEach(key => {
+    postCache.del(key);
+  });
+  await invalidateCache('posts');
+  
   // Trigger Pusher event
   pusher.trigger(`post-${postId}`, 'like-updated', {
     postId,
@@ -349,7 +356,7 @@ router.patch('/:postId/unlike', authJs, async (req, res) => {
 });
 
 // Get single post
-router.get('/:postId', authJs, async (req, res) => {
+router.get('/:postId', authJs, cacheMiddleware(600), async (req, res) => {
   try {
     const post = await Post.findById(req.params.postId)
       .populate('createdBy', 'username avatar')
@@ -431,25 +438,24 @@ router.patch('/:postId', authJs, async (req, res) => {
         }));
       }
 
-      const updatedPost = await post.save();
-      
-      // Invalidate cache
-      postCache.keys().forEach(key => {
-        if (key.startsWith('posts_')) {
-          postCache.del(key);
-        }
-      });
+const updatedPost = await post.save();
+  
+// Invalidate cache
+postCache.keys().forEach(key => {
+postCache.del(key);
+});
+await invalidateCache('posts');
+  
+// Trigger Pusher event
+pusher.trigger(`post-${postId}`, 'post-updated', {
+message: 'Post updated',
+post: updatedPost
+});
 
-      // Trigger Pusher event
-      pusher.trigger(`post-${postId}`, 'post-updated', {
-        message: 'Post updated',
-        post: updatedPost
-      });
-
-      res.status(200).json({
-        message: "Post updated successfully",
-        post: updatedPost
-      });
+res.status(200).json({
+message: "Post updated successfully",
+post: updatedPost
+});
     } catch (error) {
       console.error('Error updating post:', error);
       res.status(500).json({ message: "Error updating post", error: error.message });

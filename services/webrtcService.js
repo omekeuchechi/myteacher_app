@@ -2,6 +2,7 @@ const EventEmitter = require('events');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const Message = require('../models/message');
+const redisClient = require('../config/redis');
 
 class WebRTCService extends EventEmitter {
   constructor(io, options = {}) {
@@ -882,6 +883,9 @@ class WebRTCService extends EventEmitter {
       // Broadcast to room
       this.io.to(roomId).emit('chat-message', populatedMessage.toObject({ virtuals: true }));
       
+      // Invalidate message cache for this room
+      this.invalidateMessageCache(roomId);
+      
       return populatedMessage;
     } catch (error) {
       console.error('Error saving message:', error);
@@ -944,6 +948,9 @@ class WebRTCService extends EventEmitter {
 
       this.io.to(message.roomId).emit('message-edited', populatedMessage.toObject({ virtuals: true }));
       
+      // Invalidate message cache for this room
+      this.invalidateMessageCache(message.roomId);
+      
     } catch (error) {
       console.error('Error editing message:', error);
       socket.emit('error', { message: 'Failed to edit message', error: error.message });
@@ -971,6 +978,9 @@ class WebRTCService extends EventEmitter {
         timestamp: new Date()
       });
       
+      // Invalidate message cache for this room
+      this.invalidateMessageCache(message.roomId);
+      
     } catch (error) {
       console.error('Error deleting message:', error);
       socket.emit('error', { message: 'Failed to delete message', error: error.message });
@@ -979,10 +989,47 @@ class WebRTCService extends EventEmitter {
 
   async getMessageHistory(roomId, { limit = 50, before } = {}) {
     try {
-      return await Message.getRoomMessages(roomId, { limit, before });
+      // Create cache key
+      const cacheKey = `messages:${roomId}:${limit}:${before || 'latest'}`;
+      
+      // Try to get from cache first
+      try {
+        const cachedMessages = await redisClient.get(cacheKey);
+        if (cachedMessages) {
+          console.log('Using cached message history for room:', roomId);
+          return JSON.parse(cachedMessages);
+        }
+      } catch (cacheError) {
+        console.warn('Cache error, fetching from database:', cacheError.message);
+      }
+      
+      // Fetch from database
+      const messages = await Message.getRoomMessages(roomId, { limit, before });
+      
+      // Cache the results for 5 minutes (300 seconds)
+      try {
+        await redisClient.set(cacheKey, JSON.stringify(messages), 300);
+        console.log('Cached message history for room:', roomId);
+      } catch (cacheError) {
+        console.warn('Failed to cache message history:', cacheError.message);
+      }
+      
+      return messages;
     } catch (error) {
       console.error('Error fetching message history:', error);
       throw error;
+    }
+  }
+
+  // Cache invalidation helper method
+  async invalidateMessageCache(roomId) {
+    try {
+      // Delete all message cache keys for this room using pattern matching
+      const pattern = `messages:${roomId}:*`;
+      await redisClient.delPattern(pattern);
+      console.log('Invalidated message cache for room:', roomId);
+    } catch (cacheError) {
+      console.warn('Failed to invalidate message cache:', cacheError.message);
     }
   }
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const authJs = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 const Course = require('../models/course');
 const Enrollment = require('../models/enrollment');
 const User = require('../models/user');
@@ -20,7 +21,7 @@ const { createZoomMeeting } = require('../lib/zoom');
 // });
 
 // Admin creates a lecture batch
-router.post('/create-lecture-batch', authJs, isSuperAdmin, async (req, res) => {
+router.post('/create-lecture-batch', authJs, async (req, res) => {
   const isAdmin = req.decoded && req.decoded.isAdmin;
   const isUserSuperAdmin = req.decoded.isSuperAdmin;
   if (!isAdmin) {
@@ -92,6 +93,10 @@ router.post('/create-lecture-batch', authJs, isSuperAdmin, async (req, res) => {
     });
 
     const savedLecture = await lecture.save();
+    
+    // Invalidate cache after successful lecture batch creation
+    await invalidateCache('enrollments');
+    await invalidateCache('lectures');
 
     // Get the admin who created this batch
     const creatingAdmin = await User.findById(req.decoded.userId);
@@ -150,7 +155,7 @@ router.post('/create-lecture-batch', authJs, isSuperAdmin, async (req, res) => {
 // });
 
 // Fetch a specific lecture by ID
-router.get('/lectures/:lectureId', authJs, async (req, res) => {
+router.get('/lectures/:lectureId', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     const lecture = await Lecture.findById(req.params.lectureId).populate('lecturesListed studentsEnrolled');
     if (!lecture) {
@@ -212,6 +217,10 @@ router.patch('/update-lecture/:lectureId', authJs, isSuperAdmin, async (req, res
     if (verificationToken !== undefined) lecture.verificationToken = verificationToken;
 
     await lecture.save();
+    
+    // Invalidate cache after successful lecture batch update
+    await invalidateCache('enrollments');
+    await invalidateCache('lectures');
 
     res.json({ message: "Lecture batch updated", lecture });
   } catch (error) {
@@ -219,7 +228,7 @@ router.patch('/update-lecture/:lectureId', authJs, isSuperAdmin, async (req, res
   }
 });
 
-router.get('/start-meeting/:lectureId', authJs, async (req, res) => {
+router.get('/start-meeting/:lectureId', authJs, cacheMiddleware(60), async (req, res) => {
   try {
     const { lectureId } = req.params;
     const lecture = await Lecture.findById(lectureId);
@@ -247,7 +256,7 @@ router.get('/start-meeting/:lectureId', authJs, async (req, res) => {
 
 
 // list all the enrollments
-router.get('/list', authJs, async (req, res) => {
+router.get('/list', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     const enrollments = await Enrollment.find()
       .populate({
@@ -277,6 +286,10 @@ router.delete('/delete/:enrollmentId', authJs, isSuperAdmin, async (req, res) =>
     if (!enrollment) {
       return res.status(404).json({ message: "Enrollment not found" });
     }
+    
+    // Invalidate cache after successful enrollment deletion
+    await invalidateCache('enrollments');
+    
     res.json({ message: "Enrollment deleted" });
   } catch (error) {
     res.status(500).json({ message: "Error deleting enrollment", error: error.message });

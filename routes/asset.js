@@ -3,6 +3,7 @@ const router = express.Router();
 const cloudinary = require('cloudinary').v2;
 const { Readable } = require('stream');
 const authJs = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 const Asset = require('../models/asset');
 const Lecture = require('../models/lecture');
 const Busboy = require('busboy');
@@ -176,6 +177,9 @@ router.post('/upload', authJs, async (req, res) => {
           
           await asset.save();
           
+          // Invalidate cache after successful upload
+          await invalidateCache('assets');
+          
           res.json({
             success: true,
             message: 'File uploaded successfully',
@@ -264,6 +268,9 @@ router.post('/upload', authJs, async (req, res) => {
             });
             
             await asset.save();
+            
+            // Invalidate cache after successful upload
+            await invalidateCache('assets');
             
             res.json({
               success: true,
@@ -441,7 +448,7 @@ router.get('/download/:id', authJs, async (req, res) => {
 });
 
 // List all assets (admin only)
-router.get('/all', authJs, async (req, res) => {
+router.get('/all', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     // Check if user is admin
     if (!req.decoded.isAdmin) {
@@ -555,6 +562,9 @@ router.delete('/asset-delete/:id', authJs, async (req, res) => {
     // Delete from database
     await asset.deleteOne();
     
+    // Invalidate cache after successful deletion
+    await invalidateCache('assets');
+    
     res.json({
       success: true,
       message: 'Asset deleted successfully'
@@ -573,7 +583,7 @@ router.delete('/asset-delete/:id', authJs, async (req, res) => {
 
 
 // Get a single asset by ID
-router.get('/:id', authJs, async (req, res) => {
+router.get('/:id', authJs, cacheMiddleware(600), async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -663,7 +673,7 @@ router.get('/:id', authJs, async (req, res) => {
 });
 
 // List assets for a lecture
-router.get('/list/lecture/:lectureId', authJs, async (req, res) => {
+router.get('/list/lecture/:lectureId', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     const { lectureId } = req.params;
     
@@ -718,7 +728,7 @@ router.get('/list/lecture/:lectureId', authJs, async (req, res) => {
  * @description Get all assets for the batches the current user is enrolled in
  * @access Private (requires authentication)
  */
-router.get('/my-batch-assets', authJs, async (req, res) => {
+router.get('/my-batch-assets', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     console.log('Request received at /assets/my-batch-assets');
     console.log('Authenticated user:', req.decoded);

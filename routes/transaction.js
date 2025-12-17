@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const axios = require('axios');
 const authJs = require('../middlewares/auth');
+const { cacheMiddleware, invalidateCache, invalidateCacheByKey } = require('../middlewares/cache');
 const Course = require('../models/course');
 const Transaction = require('../models/transaction');
 const Enrollment = require('../models/enrollment');
@@ -196,6 +197,9 @@ router.post('/pay/paystack', authJs, async (req, res) => {
       status: 'pending',
       paymentMethod: 'paystack'
     });
+    
+    // Invalidate cache after successful transaction creation
+    await invalidateCache('transactions');
 
     res.json({ authorization_url });
   } catch (error) {
@@ -267,6 +271,11 @@ router.all('/paystack/callback', async (req, res) => {
       expiryDate,
       linkedLecture: paymentData.metadata.linkedLecture // Store the linked lecture reference
     });
+    
+    // Invalidate cache after successful payment and enrollment
+    await invalidateCache('transactions');
+    await invalidateCache('enrollments');
+    await invalidateCache('certificates');
 
     // Generate certificate if linkedLecture exists
     if (paymentData.metadata.linkedLecture) {
@@ -488,7 +497,7 @@ router.all('/paystack/callback', async (req, res) => {
 });
 
 // API for fetching all transactions (admin only) with pagination
-router.get('/all-transactions', authJs, async (req, res) => {
+router.get('/all-transactions', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     // Check if user is admin
     if (!req.decoded || !req.decoded.isAdmin) {
@@ -575,7 +584,7 @@ router.get('/all-transactions', authJs, async (req, res) => {
 });
 
 // API for fetching single user's transactions with user and course details
-router.get('/user-transactions', authJs, async (req, res) => {
+router.get('/user-transactions', authJs, cacheMiddleware(300), async (req, res) => {
   try {
     const transactions = await Transaction.find({ userId: req.decoded.userId })
       .populate({
@@ -686,10 +695,16 @@ router.post('/free-lecture', authJs, async (req, res) => {
                         username: user.name,
                         downloadurl: downloadurl
                     });
+                    
+                    // Invalidate cache after certificate generation
+                    await invalidateCache('certificates');
 
                     // Update or create MultipleCrt record
                     await MultipleCrt.findOneAndUpdate(
-                        { userId: userId },
+                        { 
+                            userId: userId,
+                            crtId: { $ne: newCertificate._id }
+                        },
                         { 
                             $set: { username: user.name },
                             $addToSet: { crtId: newCertificate._id }
@@ -771,7 +786,7 @@ router.post('/free-lecture', authJs, async (req, res) => {
 });
 
 // Get all certificates for the authenticated user
-router.get('/certificates', authJs, async (req, res) => {
+router.get('/certificates', authJs, cacheMiddleware(600), async (req, res) => {
     try {
         const userId = req.decoded.userId; // Get user ID from auth token
         
@@ -795,7 +810,7 @@ router.get('/certificates', authJs, async (req, res) => {
 });
 
 // Get a specific certificate by lecture ID for the authenticated user
-router.get('/certificate/:lectureId', authJs, async (req, res) => {
+router.get('/certificate/:lectureId', authJs, cacheMiddleware(600), async (req, res) => {
     try {
         const { lectureId } = req.params;
         const userId = req.decoded.userId;
@@ -840,6 +855,9 @@ router.delete('/certificate/:lectureId', authJs, async (req, res) => {
                 message: 'Certificate not found for this lecture' 
             });
         }
+        
+        // Invalidate cache after certificate deletion
+        await invalidateCache('certificates');
         
         res.json({ success: true, message: 'Certificate deleted successfully' });
     } catch (error) {
